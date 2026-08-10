@@ -25,6 +25,13 @@ La identidad sale del token, nunca del cuerpo: ningún endpoint acepta
 `operario_id`. El módulo firma quién despachó qué, y esa firma tiene que valer
 como evidencia.
 
+**El acceso lo da la ruta asignada en AdminUsuarios, y solo eso.** Este módulo
+no crea usuarios: quien tiene `/despacho-mega/operario` o `/despacho-mega/admin`
+queda registrado solo la primera vez que entra, y el rol se deriva de esa ruta
+en cada request. Tener una segunda lista de habilitados garantizaba que tarde o
+temprano dijeran cosas distintas. Lo único que administra el panel es
+`modo_habilitado` y `activo`.
+
 **Prefijos obligatorios.** El proyecto de Supabase lo comparten muchos módulos.
 Todo lo de este va con `despacho_mega_` (tablas, tipos, vistas, funciones,
 políticas). En el frontend: CSS `dm-`, componentes `DM`, env `VITE_DESPACHO_MEGA_`.

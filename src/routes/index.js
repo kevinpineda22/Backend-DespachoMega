@@ -22,7 +22,6 @@ import {
   actualizarOperarioBody,
   aprobarBody,
   crearAlertaBody,
-  crearOperarioBody,
   finalizarDespachoBody,
   listarAlertasQuery,
   listarDespachosQuery,
@@ -114,14 +113,10 @@ router.patch(
 );
 
 // --- Operarios (solo admin) -----------------------------------------------
+//
+// No hay POST: el alta de usuarios vive en AdminUsuarios, y quien tiene la ruta
+// asignada queda registrado solo al entrar. Ver `middleware/auth.js`.
 router.get("/operarios", requireAdmin, operarios.listar);
-
-router.post(
-  "/operarios",
-  requireAdmin,
-  validate({ body: crearOperarioBody }),
-  operarios.crear,
-);
 
 router.patch(
   "/operarios/:id",

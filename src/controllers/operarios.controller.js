@@ -10,11 +10,6 @@ export const listar = asyncHandler(async (req, res) => {
   res.json({ ok: true, data });
 });
 
-export const crear = asyncHandler(async (req, res) => {
-  const data = await operarioService.crear(req.body, req.usuario);
-  res.status(201).json({ ok: true, data });
-});
-
 export const actualizar = asyncHandler(async (req, res) => {
   const data = await operarioService.actualizar(req.params.id, req.body, req.usuario);
   res.json({ ok: true, data });

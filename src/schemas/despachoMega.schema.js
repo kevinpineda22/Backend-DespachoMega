@@ -72,23 +72,10 @@ export const aprobarBody = z.object({
   observacion: z.string().trim().max(500).optional(),
 });
 
-export const crearOperarioBody = z.object({
-  correo: z.string().trim().toLowerCase().email("Correo invalido."),
-  nombre: z.string().trim().min(3, "El nombre es obligatorio."),
-  documento: z.string().trim().max(30).optional(),
-  password: z
-    .string()
-    .min(10, "La contraseña temporal debe tener al menos 10 caracteres."),
-  rol: z.enum(["operario", "admin"]).default("operario"),
-  modo_habilitado: z.enum(["picking", "auditoria", "ambos"]).default("ambos"),
-  sede: z.string().trim().max(80).optional(),
-});
-
 export const actualizarOperarioBody = z
   .object({
     nombre: z.string().trim().min(3).optional(),
     documento: z.string().trim().max(30).optional(),
-    rol: z.enum(["operario", "admin"]).optional(),
     modo_habilitado: z.enum(["picking", "auditoria", "ambos"]).optional(),
     sede: z.string().trim().max(80).optional(),
     activo: z.boolean().optional(),
