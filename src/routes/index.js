@@ -11,6 +11,7 @@ import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 
 import * as despachos from "../controllers/despachos.controller.js";
+import * as facturas from "../controllers/facturas.controller.js";
 import * as alertas from "../controllers/alertas.controller.js";
 import * as operarios from "../controllers/operarios.controller.js";
 import * as analitica from "../controllers/analitica.controller.js";
@@ -21,12 +22,16 @@ import {
   actualizarAlertaBody,
   actualizarOperarioBody,
   aprobarBody,
+  bandejaNovedadesQuery,
   crearAlertaBody,
   finalizarDespachoBody,
+  historialQuery,
   listarAlertasQuery,
   listarDespachosQuery,
+  listarFacturasQuery,
   numeroFactura,
   paramsId,
+  paramsNumeroFactura,
   rangoFechasQuery,
   tipoDocumento,
   validarItemBody,
@@ -101,9 +106,47 @@ router.post(
   despachos.aprobar,
 );
 
+// Bitacora del despacho. Sin `requireAdmin`: el servicio aplica la misma regla
+// que el resto —un operario ve lo suyo, el admin ve todo— y duplicarla aca
+// abriria la puerta a que un dia digan cosas distintas.
+router.get(
+  "/despachos/:id/eventos",
+  validate({ params: paramsId }),
+  despachos.eventos,
+);
+
+// --- Panel de facturas (solo admin) ---------------------------------------
+//
+// OJO: `/facturas/:numero` (mas arriba) consulta la factura en SIESA. Esto
+// consulta lo que paso con ella EN EL MODULO — de ahi el prefijo `/panel`, que
+// evita que dos preguntas distintas compartan la misma ruta.
+router.get(
+  "/panel/facturas",
+  requireAdmin,
+  validate({ query: listarFacturasQuery }),
+  facturas.listar,
+);
+
+router.get(
+  "/panel/facturas/:numero",
+  requireAdmin,
+  validate({ params: paramsNumeroFactura }),
+  facturas.detalle,
+);
+
 // --- Alertas de inventario ------------------------------------------------
 router.post("/alertas", validate({ body: crearAlertaBody }), alertas.crear);
 router.get("/alertas", validate({ query: listarAlertasQuery }), alertas.listar);
+
+// Bandeja del admin: la misma informacion pero con antiguedad, etapa de
+// deteccion y quien la atendio. Va aparte de `GET /alertas` porque esa la usa
+// tambien el operario, y cargarla con todo eso seria peso que no necesita.
+router.get(
+  "/panel/novedades",
+  requireAdmin,
+  validate({ query: bandejaNovedadesQuery }),
+  alertas.bandeja,
+);
 
 router.patch(
   "/alertas/:id",
@@ -125,6 +168,14 @@ router.patch(
   operarios.actualizar,
 );
 
+// "¿Que hizo Fulano hoy?" respondido de corrido, sin cruzar cinco tablas.
+router.get(
+  "/operarios/:id/actividad",
+  requireAdmin,
+  validate({ params: paramsId, query: historialQuery }),
+  operarios.actividad,
+);
+
 // --- Analitica (solo admin) -----------------------------------------------
 router.get(
   "/analitica/tablero",
@@ -137,5 +188,6 @@ router.get("/analitica/por-operario", requireAdmin, validate({ query: rangoFecha
 router.get("/analitica/productos-top", requireAdmin, validate({ query: rangoFechasQuery }), analitica.productosTop);
 router.get("/analitica/picos-trabajo", requireAdmin, validate({ query: rangoFechasQuery }), analitica.picosTrabajo);
 router.get("/analitica/novedades", requireAdmin, validate({ query: rangoFechasQuery }), analitica.novedades);
+router.get("/analitica/calidad-escaneo", requireAdmin, validate({ query: rangoFechasQuery }), analitica.calidadEscaneo);
 
 export default router;

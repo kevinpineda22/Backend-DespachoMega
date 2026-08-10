@@ -19,6 +19,12 @@ export const listar = asyncHandler(async (req, res) => {
   res.json({ ok: true, data });
 });
 
+/** Bandeja del admin: novedades enriquecidas + conteo por estado. */
+export const bandeja = asyncHandler(async (req, res) => {
+  const data = await alertaService.bandeja(req.query);
+  res.json({ ok: true, ...data });
+});
+
 export const actualizar = asyncHandler(async (req, res) => {
   const data = await alertaService.actualizar(req.params.id, req.body, req.usuario);
   res.json({ ok: true, data });

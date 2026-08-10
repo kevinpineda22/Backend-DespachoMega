@@ -60,9 +60,37 @@ export const crearAlertaBody = z.object({
   comentario: z.string().trim().max(500).optional(),
 });
 
+export const estadoAlerta = z.enum([
+  "abierta",
+  "en_gestion",
+  "resuelta",
+  "descartada",
+]);
+
+export const motivoAlerta = z.enum([
+  "sin_fisico",
+  "averiado",
+  "ubicacion_errada",
+  "diferencia_cantidad",
+  "otro",
+]);
+
+// La respuesta sigue siendo opcional en el contrato porque `en_gestion` no la
+// necesita. Que sea obligatoria al CERRAR es una regla de negocio y vive en
+// `alerta.service.js`: el esquema no puede saber si la alerta ya traia una
+// respuesta escrita en un paso anterior.
 export const actualizarAlertaBody = z.object({
-  estado: z.enum(["abierta", "en_gestion", "resuelta", "descartada"]),
+  estado: estadoAlerta,
   respuesta: z.string().trim().max(500).optional(),
+});
+
+export const bandejaNovedadesQuery = z.object({
+  estado: estadoAlerta.optional(),
+  motivo: motivoAlerta.optional(),
+  modo: modo.optional(),
+  desde: z.string().date().optional(),
+  hasta: z.string().date().optional(),
+  limite: z.coerce.number().int().min(1).max(500).default(100),
 });
 
 export const aprobarBody = z.object({
@@ -98,6 +126,48 @@ export const listarAlertasQuery = z.object({
   desde: z.string().date().optional(),
   hasta: z.string().date().optional(),
   limite: z.coerce.number().int().min(1).max(500).default(100),
+});
+
+// Un query string no tiene booleanos: todo llega como texto. `z.coerce.boolean()`
+// NO sirve aca — sigue las reglas de JavaScript y convierte "false" en `true`,
+// porque cualquier string no vacio es truthy. Un filtro que se activa cuando el
+// frontend manda `false` es un bug silencioso, asi que se compara el texto.
+const booleanoQuery = z
+  .enum(["true", "false"])
+  .transform((v) => v === "true")
+  .optional();
+
+export const etapaFactura = z.enum([
+  "alistando",
+  "alistada",
+  "auditando",
+  "auditada",
+  "aprobada",
+  "rechazada",
+]);
+
+export const paramsNumeroFactura = z.object({ numero: numeroFactura });
+
+export const listarFacturasQuery = z.object({
+  etapa: etapaFactura.optional(),
+  operario_id: uuid.optional(),
+  // Busca por numero de factura o por nombre de cliente: el supervisor a veces
+  // recuerda al cliente y no el consecutivo.
+  texto: z.string().trim().max(80).optional(),
+  sede: z.string().trim().max(80).optional(),
+  desde: z.string().date().optional(),
+  hasta: z.string().date().optional(),
+  con_novedades: booleanoQuery,
+  con_diferencia: booleanoQuery,
+  // Minutos sin movimiento para considerar una factura estancada. Sin valor por
+  // defecto a proposito: el filtro se activa solo si el panel lo pide.
+  estancadas_minutos: z.coerce.number().int().min(1).max(10080).optional(),
+  limite: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const historialQuery = z.object({
+  limite: z.coerce.number().int().min(1).max(500).default(200),
 });
 
 export const listarDespachosQuery = z.object({

@@ -241,6 +241,25 @@ export async function listar(filtros) {
   return despachosRepo.listar(filtros);
 }
 
+/**
+ * Bitacora del despacho, en orden cronologico.
+ *
+ * `despacho_mega_eventos` se venia escribiendo desde el primer dia y no habia
+ * forma de leerla: quien abrio, quien reanudo, cada rechazo y cada aprobacion
+ * estaban guardados y eran invisibles. Esto es lo que convierte esos registros
+ * en trazabilidad de verdad.
+ *
+ * Pasa por `asegurarAcceso`: un operario puede revisar su propio historial, no
+ * el de otro.
+ */
+export async function historial(id, usuario) {
+  const despacho = await despachosRepo.porId(id);
+  if (!despacho) throw noEncontrado("Despacho no encontrado.");
+  asegurarAcceso(despacho, usuario);
+
+  return eventosRepo.historialPorDespacho(id);
+}
+
 // ---------------------------------------------------------------------------
 // Validar un escaneo
 // ---------------------------------------------------------------------------

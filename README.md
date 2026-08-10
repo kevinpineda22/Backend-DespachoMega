@@ -34,6 +34,10 @@ Ejecutar en el SQL Editor de Supabase, **en este orden**:
 1. `db/migrations/001_despacho_mega_schema.sql`
 2. `db/migrations/002_despacho_mega_views.sql`
 3. `db/migrations/003_despacho_mega_rls.sql`
+4. `db/migrations/004_despacho_mega_catalogo.sql`
+5. `db/migrations/005_despacho_mega_auditoria_origen.sql`
+6. `db/migrations/006_despacho_mega_vista_facturas.sql`
+7. `db/migrations/007_despacho_mega_novedades_analitica.sql`
 
 ### Primer administrador
 

@@ -184,6 +184,111 @@ Sin `item_id` la decisión aplica al despacho completo y cambia su estado. Con
 
 `400` si el despacho todavía está `en_proceso`.
 
+### `GET /api/despachos/:id/eventos`
+
+Bitácora del despacho en orden cronológico: quién lo abrió, cada rechazo, la
+finalización y la decisión del admin.
+
+No exige admin: aplica la misma regla que el resto del módulo — un operario ve
+lo suyo, el admin ve todo.
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": 41,
+      "evento": "despacho_abierto",
+      "actor_correo": "operario@merkahorrosas.com",
+      "payload": { "numero_factura": "75812", "modo": "picking" },
+      "created_at": "2026-08-10T13:02:11.000Z"
+    }
+  ]
+}
+```
+
+---
+
+## Panel de facturas · solo admin
+
+Una fila por **factura**, con el picking y la auditoría pivotados. El resto de
+la API razona en despachos (una sesión de trabajo); esto razona en facturas, que
+es la unidad que supervisa el administrador.
+
+> No confundir con `GET /api/facturas/:numero`, que consulta **Siesa**. Esto
+> consulta lo que pasó con la factura **dentro del módulo**.
+
+### `GET /api/panel/facturas`
+
+Query: `etapa`, `operario_id`, `texto`, `sede`, `desde`, `hasta`,
+`con_novedades`, `con_diferencia`, `estancadas_minutos`, `limite`, `offset`.
+
+- `etapa`: `alistando` · `alistada` · `auditando` · `auditada` · `aprobada` ·
+  `rechazada`. **`con_novedad` no es una etapa**, es una bandera
+  (`novedades_abiertas`): como estado tapaba el dato de si la factura ya se
+  había auditado.
+- `texto` busca en número de factura **y** en nombre del cliente.
+- `operario_id` matchea al operario de **cualquiera** de las dos etapas.
+- `con_novedades` y `con_diferencia` son booleanos por texto: `"true"` /
+  `"false"`. Solo se aplican con `"true"`.
+- `estancadas_minutos` filtra facturas sin movimiento hace más de N minutos y
+  todavía en curso. El "movimiento" sale del último escaneo, no de
+  `updated_at`: un escaneo rechazado es trabajo y no toca la fila del despacho.
+
+```json
+{
+  "ok": true,
+  "facturas": [
+    {
+      "numero_factura": "75812",
+      "cliente_nombre": "DISTRIBUIDORA X SAS",
+      "etapa": "auditando",
+      "picking_operario_nombre": "Juan Pérez",
+      "picking_avance_pct": 100,
+      "picking_minutos": 42.5,
+      "auditoria_operario_nombre": "Ana Gómez",
+      "auditoria_avance_pct": 60,
+      "novedades_abiertas": 1,
+      "escaneos_rechazados": 3,
+      "tiene_diferencia": false,
+      "unidades_diferencia": null,
+      "ultimo_movimiento_at": "2026-08-10T14:21:00.000Z"
+    }
+  ],
+  "total": 37,
+  "conteo_por_etapa": { "alistando": 4, "auditada": 12 }
+}
+```
+
+Los `*_avance_pct` salen de **unidades**, no de líneas completas:
+`items_validados` cuenta líneas y como barra de progreso salta a escalones.
+
+### `GET /api/panel/facturas/:numero`
+
+Todo lo del panel lateral en una sola llamada: `resumen`, `picking`,
+`auditoria`, `comparativo` y `linea_tiempo`.
+
+`comparativo` cruza las líneas de las dos etapas:
+
+```json
+{
+  "linea": 3,
+  "codigo_item": "188745",
+  "facturado": 24,
+  "alistado": 24,
+  "auditado": 22,
+  "diferencia_picking": 0,
+  "diferencia_auditoria": -2
+}
+```
+
+El cruce **no** es por número de línea: `abrirAuditoria` renumera desde 1 sobre
+las líneas efectivamente alistadas. Se cruza por código de ítem y en orden,
+consumiendo de a uno, porque una factura puede repetir el mismo producto en
+varias líneas.
+
+`404` si la factura no tiene ningún despacho registrado.
+
 ---
 
 ## Alertas de inventario
@@ -213,10 +318,50 @@ Query: `estado`, `despacho_id`, `desde`, `hasta`, `limite`.
 ### `PATCH /api/alertas/:id` · solo admin
 
 ```json
-{ "estado": "resuelta", "respuesta": "texto opcional" }
+{ "estado": "resuelta", "respuesta": "se ajustó el inventario" }
 ```
 
 Estados: `abierta`, `en_gestion`, `resuelta`, `descartada`.
+
+**Cerrar exige `respuesta`.** Con `estado` en `resuelta` o `descartada` y sin
+texto (ni uno guardado antes) responde `400`. Descartar sobre todo: significa
+"el reporte no correspondía", y eso hay que poder sustentarlo después.
+
+Al reabrir (`en_gestion`) se limpia `resuelta_at`, porque `minutos_abierta` usa
+`COALESCE(resuelta_at, NOW())` y una fecha vieja congelaría el reloj.
+
+### `GET /api/panel/novedades` · solo admin
+
+Bandeja del administrador. Es una lectura distinta de `GET /api/alertas` —esa la
+usa también el operario— y agrega lo que la tabla sola no da: antigüedad, etapa
+en la que se detectó y el **nombre** de quien atendió (`atendida_por` apunta a
+`auth.users`, así que PostgREST no lo resuelve con un join automático).
+
+Query: `estado`, `motivo`, `modo`, `desde`, `hasta`, `limite`.
+
+```json
+{
+  "ok": true,
+  "novedades": [
+    {
+      "codigo_item": "188745",
+      "cantidad_faltante": 3,
+      "motivo": "sin_fisico",
+      "estado": "en_gestion",
+      "minutos_abierta": 142.5,
+      "modo": "auditoria",
+      "comentario": "no había físico en la ubicación",
+      "respuesta": null,
+      "reportada_por_nombre": "Juan Pérez",
+      "atendida_por_nombre": "Ana Gómez"
+    }
+  ],
+  "conteo_por_estado": { "abierta": 4, "en_gestion": 1 }
+}
+```
+
+Una novedad con `modo = "auditoria"` pesa más que una de picking: significa que
+el picking la dejó pasar.
 
 ---
 
@@ -226,28 +371,30 @@ Estados: `abierta`, `en_gestion`, `resuelta`, `descartada`.
 
 Query opcional: `activos=true`.
 
-### `POST /api/operarios`
-
-Crea el usuario en Supabase Auth **y** la fila del módulo.
-
-```json
-{
-  "correo": "operario@merkahorrosas.com",
-  "nombre": "Juan Pérez",
-  "documento": "1020304050",
-  "password": "temporal-12345",
-  "rol": "operario",
-  "modo_habilitado": "ambos",
-  "sede": "Megamayoristas"
-}
-```
-
-`409` si el correo ya está en el módulo, o si ya tiene cuenta en la intranet por
-otro módulo (en ese caso hay que vincular, no crear).
+> **No hay `POST /api/operarios`, y es deliberado.** El alta de personas vive en
+> AdminUsuarios: quien tiene la ruta `/despacho-mega/operario` o
+> `/despacho-mega/admin` queda registrado solo la primera vez que entra. Una
+> segunda lista de habilitados garantizaba que tarde o temprano dijeran cosas
+> distintas.
 
 ### `PATCH /api/operarios/:id`
 
-Campos: `nombre`, `documento`, `rol`, `modo_habilitado`, `sede`, `activo`.
+Campos: `nombre`, `documento`, `modo_habilitado`, `sede`, `activo`.
+
+`rol` **no** se edita: se deriva de la ruta asignada en cada request, así que
+ponerlo a mano duraría hasta el próximo ingreso de la persona.
+
+### `GET /api/operarios/:id/actividad`
+
+Qué hizo esa persona, de corrido. Query opcional: `limite` (1–500, por defecto
+200).
+
+```json
+{ "ok": true, "data": { "operario": { "...": "..." }, "eventos": [] } }
+```
+
+La bitácora se indexa por correo del **actor**, no por dueño del despacho: un
+admin que aprueba el despacho de otro aparece acá y no allá.
 
 ---
 
@@ -256,14 +403,50 @@ Campos: `nombre`, `documento`, `rol`, `modo_habilitado`, `sede`, `activo`.
 Query común: `desde`, `hasta` (`YYYY-MM-DD`), `modo`, `operario_id`, `limite`.
 Sin rango, los últimos 30 días.
 
-| Endpoint                      | Devuelve                                   |
-| ----------------------------- | ------------------------------------------ |
-| `/analitica/tablero`          | Todo lo de abajo en una sola llamada        |
-| `/analitica/resumen`          | Totales por día, modo y estado              |
-| `/analitica/por-operario`     | Despachos por usuario                       |
-| `/analitica/productos-top`    | Productos más despachados                   |
-| `/analitica/picos-trabajo`    | Escaneos por día de semana y hora           |
-| `/analitica/novedades`        | Novedades de inventario con tiempo abierta  |
+| Endpoint                       | Devuelve                                      |
+| ------------------------------ | --------------------------------------------- |
+| `/analitica/tablero`           | Todo lo de abajo en una sola llamada           |
+| `/analitica/resumen`           | Serie diaria: picking vs auditoría por día     |
+| `/analitica/por-operario`      | Una fila por operario y modo, no por día       |
+| `/analitica/productos-top`     | Top del rango, no de pares producto-día        |
+| `/analitica/picos-trabajo`     | Grilla día de semana × hora                    |
+| `/analitica/novedades`         | Novedades con tiempo abierta                   |
+| `/analitica/calidad-escaneo`   | Aciertos y rechazos por operario, por tipo     |
 
-`/analitica/tablero` agrega `totales` (facturas, despachos, líneas) para las
-tarjetas de cabecera.
+### Todo llega ya agregado al rango
+
+Las vistas agrupan **por día**; estos endpoints devuelven el rango colapsado. No
+es un detalle de comodidad: las vistas diarias no se pueden sumar a ojo.
+
+- **`COUNT(DISTINCT …)` no es aditivo.** `total_facturas` del resumen diario está
+  por día+modo+estado; sumarlo contaba la misma factura una vez por picking, otra
+  por auditoría y otra si cambiaba de estado. Por eso `totales.facturas` sale de
+  `despacho_mega_vw_facturas`, que tiene una fila por factura.
+- **`AVG(…)` tampoco.** `minutos_promedio` es por día, y promediar promedios le
+  da el mismo peso a un día de 2 despachos y a uno de 20. La migración 007 agregó
+  `minutos_totales` y `despachos_finalizados` para recalcularlo exacto.
+- **El recorte va después de agrupar.** Antes `limite` cortaba las filas
+  producto-día, así que un producto repartido en muchos días quedaba fuera del
+  top aunque fuera el más despachado del rango.
+
+La regla vive en `src/services/agregacion.js` y está cubierta por tests.
+
+### `totales` de `/analitica/tablero`
+
+```json
+{
+  "facturas": 37,
+  "despachos": 52,
+  "items_solicitados": 610,
+  "items_validados": 588,
+  "novedades_abiertas": 3,
+  "facturas_auditadas": 21,
+  "facturas_con_diferencia": 2,
+  "unidades_diferencia": 9,
+  "tasa_discrepancia": 9.52
+}
+```
+
+`tasa_discrepancia` es de lo auditado cuánto no coincidió con lo alistado —
+**la métrica que justifica el módulo**. Solo cuenta auditorías cerradas: mientras
+una corre, todo lo que el auditor aún no escaneó se vería como diferencia.

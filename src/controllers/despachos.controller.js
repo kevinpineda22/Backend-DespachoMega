@@ -59,6 +59,12 @@ export const cancelar = asyncHandler(async (req, res) => {
   res.json({ ok: true, data });
 });
 
+/** Bitacora del despacho: linea de tiempo de quien hizo que. */
+export const eventos = asyncHandler(async (req, res) => {
+  const data = await despachoService.historial(req.params.id, req.usuario);
+  res.json({ ok: true, data });
+});
+
 export const aprobar = asyncHandler(async (req, res) => {
   const data = await despachoService.aprobar(req.params.id, req.body, req.usuario);
   res.json({ ok: true, data });

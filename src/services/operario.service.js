@@ -47,3 +47,19 @@ export async function actualizar(id, cambios, usuario) {
 
   return operario;
 }
+
+/**
+ * Que hizo una persona, de corrido.
+ *
+ * La bitacora se indexa por `actor_correo` y no por `operario_id`, porque
+ * registra al ACTOR —que puede ser un admin actuando sobre el despacho de otro—
+ * y no al dueño del despacho. Por eso hay que resolver el correo primero.
+ */
+export async function actividad(id, { limite } = {}) {
+  const operario = await operariosRepo.porId(id);
+  if (!operario) throw noEncontrado("Operario no encontrado.");
+
+  const eventos = await eventosRepo.historialPorCorreo(operario.correo, limite);
+
+  return { operario, eventos };
+}

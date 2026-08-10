@@ -27,3 +27,8 @@ export const picosTrabajo = asyncHandler(async (req, res) => {
 export const novedades = asyncHandler(async (req, res) => {
   res.json({ ok: true, data: await analiticaService.novedades(req.query) });
 });
+
+/** Aciertos y rechazos de escaneo por operario: metrica de capacitacion. */
+export const calidadEscaneo = asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await analiticaService.calidadEscaneo(req.query) });
+});

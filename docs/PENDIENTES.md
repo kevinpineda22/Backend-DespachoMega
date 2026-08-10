@@ -287,10 +287,21 @@ es una cola o un trigger de base de datos, **no** poner un `await` acá.
 
 ---
 
-## 7. [B-] Tests
+## 7. [B-] Tests — arrancado (10 ago 2026)
 
-El proyecto tiene `vitest` configurado pero todavía no hay pruebas. Los
-candidatos con mejor relación valor/esfuerzo, porque son lógica pura sin I/O:
+Primera prueba real: `src/services/comparativo.test.js`, 7 casos sobre el cruce
+picking ↔ auditoría. Se eligió ese porque es donde un cambio en `abrirAuditoria`
+rompe el comparativo **en silencio**: las cantidades seguirían apareciendo, pero
+contra el producto equivocado.
+
+> **Lección al escribirla:** `compararLineas` vivía dentro de
+> `factura.service.js` y era **imposible de probar** — importarla arrastraba los
+> repositorios y con ellos `config/supabase.js`, que lanza si faltan las
+> credenciales. Se movió a `src/services/comparativo.js`, un módulo sin ninguna
+> dependencia. Una función pura no debería necesitar una service_role key para
+> probarse, y ese es el criterio para los que faltan.
+
+Los que siguen, misma razón (lógica pura sin I/O):
 
 - `facturaSiesa.service.js → normalizarFactura()` — el manejo de alias y de
   números con formato colombiano (`1.000,00`).
@@ -300,10 +311,34 @@ candidatos con mejor relación valor/esfuerzo, porque son lógica pura sin I/O:
 
 ---
 
-## 8. [B-] Paginación en analítica
+## 8. [B-] Techo de filas en analítica
 
-`/analitica/tablero` trae hasta 500 filas por vista. Con un año de operación las
-vistas por día crecen y la respuesta se va a poner pesada.
+**Corregido el bug de fondo (10 ago 2026), pero el techo sigue.**
 
-Cuando pase: agregar agregación por semana/mes en las vistas SQL en vez de
-paginar en el cliente.
+El `limite` de 100/500 no era solo un tope de tamaño: se aplicaba **antes** de
+colapsar las vistas diarias al rango, así que rompía los números. Un producto
+repartido en muchos días quedaba fuera del top aunque fuera el más despachado.
+Ahora el recorte va después de agrupar (`agregacion.js`) y las consultas traen el
+rango completo.
+
+Lo que queda es un techo de seguridad de **5.000 filas por vista**
+(`TECHO_FILAS` en `analitica.repository.js` y `facturas.repository.js`). Con
+operación normal de 30 días no se acerca. Si algún día se alcanza, la respuesta
+correcta es **agregar por semana o mes en las vistas SQL**, no subir el número:
+pasado ese punto el problema es la granularidad, no el tope.
+
+---
+
+## 9. [M] Novedades: falta cerrar el circuito con inventario
+
+La bandeja ya tiene el ciclo completo (tomar → cerrar con respuesta obligatoria,
+antigüedad con semáforo, agrupación por ítem). Lo que falta es que **inventario
+se entere sin tener el panel abierto**.
+
+El correo está implementado y **apagado**: requiere `EMAIL_ALERTAS_INVENTARIO`
+además del SMTP (ver §6). Encenderlo es cargar la variable.
+
+Lo que no está: un aviso cuando una novedad lleva mucho abierta. Hoy el semáforo
+solo se ve entrando al panel — si nadie entra, nadie se entera. El camino natural
+es un cron que consulte `despacho_mega_vw_novedades_inventario` filtrando por
+`minutos_abierta`, no un temporizador en el frontend.

@@ -18,7 +18,7 @@ import * as despachosRepo from "../repositories/despachos.repository.js";
 import * as eventosRepo from "../repositories/eventos.repository.js";
 import { EVENTO } from "../repositories/eventos.repository.js";
 import { notificarAlertaInventario } from "../lib/correo.js";
-import { conflicto, noEncontrado, prohibido } from "../lib/errores.js";
+import { conflicto, noEncontrado, prohibido, solicitudInvalida } from "../lib/errores.js";
 
 export async function crear(datos, usuario) {
   const despacho = await despachosRepo.porId(datos.despacho_id);
@@ -92,17 +92,43 @@ export async function listar(filtros) {
   return alertasRepo.listar(filtros);
 }
 
+/** Bandeja del administrador: la vista enriquecida mas el conteo por estado. */
+export async function bandeja(filtros) {
+  const [novedades, conteo] = await Promise.all([
+    alertasRepo.bandeja(filtros),
+    alertasRepo.conteoPorEstado(filtros),
+  ]);
+
+  return { novedades, conteo_por_estado: conteo };
+}
+
+// Cerrar una novedad es afirmar algo sobre el inventario, y eso tiene que
+// quedar escrito. `descartada` sobre todo: significa "el operario se equivoco",
+// y esa afirmacion hay que poder sustentarla dentro de un mes.
+const ESTADOS_CERRADOS = ["resuelta", "descartada"];
+
 /** Gestion de la alerta por parte del administrador / inventario. */
 export async function actualizar(id, { estado, respuesta }, usuario) {
   const alerta = await alertasRepo.porId(id);
   if (!alerta) throw noEncontrado("Alerta no encontrada.");
 
-  const cerrada = estado === "resuelta" || estado === "descartada";
+  const cerrada = ESTADOS_CERRADOS.includes(estado);
+  const texto = respuesta?.trim() || alerta.respuesta?.trim() || null;
+
+  if (cerrada && !texto) {
+    throw solicitudInvalida(
+      `Para marcar la novedad como ${estado} hay que escribir que se hizo. ` +
+        "Una novedad cerrada sin explicacion no sirve como antecedente.",
+    );
+  }
 
   const actualizada = await alertasRepo.actualizar(id, {
     estado,
-    respuesta: respuesta ?? alerta.respuesta,
+    respuesta: texto,
     atendida_por: usuario.userId,
+    // Se limpia al reabrir: `minutos_abierta` usa COALESCE(resuelta_at, NOW()),
+    // asi que dejar la fecha vieja congelaria el reloj de una novedad que
+    // volvio a estar en gestion.
     resuelta_at: cerrada ? new Date().toISOString() : null,
   });
 

@@ -1,11 +1,28 @@
 /**
  * analitica.service.js — Panel del administrador.
  *
- * Capa fina sobre las vistas. Existe para que el frontend pida "el tablero" y
- * no arme cinco requests coordinados, y para que el rango por defecto (30 dias)
- * este definido en un solo lugar.
+ * Capa entre las vistas diarias y el tablero. Existe por dos razones:
+ *
+ *   1. Que el frontend pida "el tablero" y no arme ocho requests coordinados.
+ *   2. Que el colapso de dia -> rango pase por UN solo lugar. Las vistas agregan
+ *      por dia y el panel las mostraba tal cual, asi que cada operario aparecia
+ *      una vez por dia y el "top de productos" era el top de pares producto-dia.
+ *      La regla de que solo se suma lo aditivo vive en `agregacion.js`.
+ *
+ * El total de facturas NO sale de aca sino de `despacho_mega_vw_facturas`, que
+ * tiene una fila por factura. Ver `facturas.repository.js → indicadores`.
  */
 import * as analiticaRepo from "../repositories/analitica.repository.js";
+import * as facturasRepo from "../repositories/facturas.repository.js";
+import {
+  agruparPorOperario,
+  agruparProductos,
+  agruparNovedadesPorItem,
+  agruparCalidad,
+  totalizar,
+  serieDiaria,
+  mapaDeCalor,
+} from "./agregacion.js";
 
 const DIAS_POR_DEFECTO = 30;
 
@@ -22,48 +39,83 @@ function normalizarRango({ desde, hasta }) {
 }
 
 /**
- * Tablero completo en una sola llamada. Las cinco consultas van en paralelo:
- * son independientes y esperarlas en serie multiplica por cinco el tiempo de
- * carga del panel.
+ * Tablero completo en una sola llamada. Las consultas van en paralelo: son
+ * independientes y esperarlas en serie multiplica el tiempo de carga del panel.
  */
 export async function tablero(filtros) {
   const rango = normalizarRango(filtros);
   const args = { ...filtros, ...rango };
+  const limite = filtros.limite || 20;
 
-  const [resumen, operarios, productos, picos, novedades] = await Promise.all([
+  const [
+    resumen,
+    operariosDia,
+    productosDia,
+    picos,
+    novedades,
+    itemsDia,
+    calidadDia,
+    indicadores,
+  ] = await Promise.all([
     analiticaRepo.resumenDiario(args),
     analiticaRepo.porOperario(args),
     analiticaRepo.productosTop(args),
     analiticaRepo.picosTrabajo(args),
     analiticaRepo.novedadesInventario(args),
+    analiticaRepo.novedadesPorItem(args),
+    analiticaRepo.calidadEscaneo(args),
+    facturasRepo.indicadores(rango),
   ]);
 
   return {
     rango,
-    resumen,
-    por_operario: operarios,
-    productos_top: productos,
-    picos_trabajo: picos,
+
+    // Series listas para graficar, no filas crudas por dia.
+    serie_diaria: serieDiaria(resumen),
+    mapa_calor: mapaDeCalor(picos),
+
+    por_operario: agruparPorOperario(operariosDia),
+    productos_top: agruparProductos(productosDia, limite),
+    novedades_por_item: agruparNovedadesPorItem(itemsDia, limite),
+    calidad_escaneo: agruparCalidad(calidadDia),
     novedades_inventario: novedades,
-    totales: totalizar(resumen),
+
+    totales: {
+      ...totalizar(resumen),
+      // De la vista de facturas, no del resumen diario: ahi estaba inflado.
+      facturas: indicadores.facturas,
+      facturas_auditadas: indicadores.auditadas,
+      facturas_con_diferencia: indicadores.con_diferencia,
+      unidades_diferencia: indicadores.unidades_diferencia,
+      tasa_discrepancia: indicadores.tasa_discrepancia,
+      novedades_abiertas: novedades.filter((n) =>
+        ["abierta", "en_gestion"].includes(n.estado),
+      ).length,
+    },
+
+    por_etapa: indicadores.por_etapa,
   };
 }
 
-/** Tarjetas de cabecera. Se calcula aca y no en SQL para no crear otra vista. */
-function totalizar(resumen) {
-  return resumen.reduce(
-    (acumulado, fila) => ({
-      despachos: acumulado.despachos + Number(fila.total_despachos || 0),
-      facturas: acumulado.facturas + Number(fila.total_facturas || 0),
-      items_solicitados: acumulado.items_solicitados + Number(fila.items_solicitados || 0),
-      items_validados: acumulado.items_validados + Number(fila.items_validados || 0),
-    }),
-    { despachos: 0, facturas: 0, items_solicitados: 0, items_validados: 0 },
-  );
-}
+// Endpoints sueltos. Devuelven lo mismo que el tablero pero de a una metrica,
+// para cuando se quiere refrescar una sola tarjeta sin recargar todo.
+export const resumen = async (f) =>
+  serieDiaria(await analiticaRepo.resumenDiario({ ...f, ...normalizarRango(f) }));
 
-export const resumen = (f) => analiticaRepo.resumenDiario({ ...f, ...normalizarRango(f) });
-export const porOperario = (f) => analiticaRepo.porOperario({ ...f, ...normalizarRango(f) });
-export const productosTop = (f) => analiticaRepo.productosTop({ ...f, ...normalizarRango(f) });
-export const picosTrabajo = (f) => analiticaRepo.picosTrabajo({ ...f, ...normalizarRango(f) });
-export const novedades = (f) => analiticaRepo.novedadesInventario({ ...f, ...normalizarRango(f) });
+export const porOperario = async (f) =>
+  agruparPorOperario(await analiticaRepo.porOperario({ ...f, ...normalizarRango(f) }));
+
+export const productosTop = async (f) =>
+  agruparProductos(
+    await analiticaRepo.productosTop({ ...f, ...normalizarRango(f) }),
+    f.limite || 20,
+  );
+
+export const picosTrabajo = async (f) =>
+  mapaDeCalor(await analiticaRepo.picosTrabajo({ ...f, ...normalizarRango(f) }));
+
+export const novedades = (f) =>
+  analiticaRepo.novedadesInventario({ ...f, ...normalizarRango(f) });
+
+export const calidadEscaneo = async (f) =>
+  agruparCalidad(await analiticaRepo.calidadEscaneo({ ...f, ...normalizarRango(f) }));

@@ -15,6 +15,12 @@ export const actualizar = asyncHandler(async (req, res) => {
   res.json({ ok: true, data });
 });
 
+/** Todo lo que hizo una persona en el modulo, en orden. */
+export const actividad = asyncHandler(async (req, res) => {
+  const data = await operarioService.actividad(req.params.id, req.query);
+  res.json({ ok: true, data });
+});
+
 /** Identidad del usuario logueado, ya resuelta por `requireAuth`. */
 export const yo = (req, res) => {
   res.json({ ok: true, data: req.usuario });
