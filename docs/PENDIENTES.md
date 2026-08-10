@@ -342,3 +342,50 @@ Lo que no está: un aviso cuando una novedad lleva mucho abierta. Hoy el semáfo
 solo se ve entrando al panel — si nadie entra, nadie se entera. El camino natural
 es un cron que consulte `despacho_mega_vw_novedades_inventario` filtrando por
 `minutos_abierta`, no un temporizador en el frontend.
+
+---
+
+## 10. Surgido del rediseño del frontend del operario (10 ago 2026)
+
+> El operario se rediseñó portando la piel y la UX del picker del ecommerce
+> (escáner de cámara, tarjetas, teclado en pantalla ON/OFF, toasts + haptics,
+> tabs, FAB de cierre) sobre este backend, sin cambiar el contrato. Estas
+> tareas son de **admin / backend** y quedan para quien lleva ese lado.
+> Re-verificadas contra el backend al 10 ago 2026 (tras el avance del panel
+> admin): siguen todas vigentes.
+
+### 10.1 [A] Cambio de contraseña en el primer ingreso — punto de enganche del front
+
+Refuerza el **§3**. El nuevo operario NO tiene ninguna vía de autoservicio para
+cambiar su clave: entra con la temporal y ahí queda. Cuando se implemente §3
+(bandera `user_metadata.debe_cambiar_password` al crear el usuario), el frontend
+del operario ya tiene el lugar natural para el redirect — el `useEffect` que
+resuelve el perfil con `dmApi.yo()`. Falta que **`/yo` devuelva la bandera** en
+su payload para que el front la lea; hoy no la expone (verificado en `API.md` y
+en el código: no hay ningún manejo de primer login).
+
+### 10.2 [M] Política de cancelar/reabrir un despacho desde el operario
+
+`POST /despachos/:id/cancelar` ya existe y libera el número de factura. El
+frontend del operario **a propósito no lo expone todavía**: si un operario abrió
+la factura equivocada, hoy no puede deshacerlo solo. Es una **decisión de
+negocio de admin**: ¿se le permite al operario cancelar su propio despacho en
+curso, o eso lo hace el admin desde su panel? Según se decida, se agrega el botón
+(el cliente `dmApi.cancelarDespacho` ya está listo) o se deja solo en el admin.
+
+### 10.3 [B-] Historial propio del operario
+
+El operario no puede ver sus despachos pasados. `GET /despachos` existe pero
+`despacho.service.js → listar()` pasa los filtros tal cual, sin forzar el
+`operario_id` del token. **Si se decide exponer "mis despachos" al operario, el
+scoping tiene que ir del lado del servidor** (derivar `operario_id` del JWT, no
+confiar en el query), coherente con la regla del módulo de que la identidad sale
+del token. Mientras no se exponga, no hay riesgo.
+
+### 10.4 CSP y cámara — sin acción, solo para que conste
+
+El operario ahora usa el escáner de cámara (`html5-qrcode`, reutilizado del
+ecommerce que ya está en producción). Usa `getUserMedia` (no hace red) y el
+worker/wasm del decodificador, que la CSP actual ya permite porque el ecommerce
+lo embarca. **No hay que tocar la CSP.** Solo requiere **HTTPS** (la cámara no
+arranca en `http://` que no sea localhost), que en producción ya se cumple.
