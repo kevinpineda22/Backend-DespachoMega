@@ -20,6 +20,62 @@
 import { env } from "../config/env.js";
 import { ejecutarConsulta } from "../lib/siesaClient.js";
 import { conflicto, noEncontrado } from "../lib/errores.js";
+import { logger } from "../lib/logger.js";
+
+// ---------------------------------------------------------------------------
+// Cache de la ventana
+// ---------------------------------------------------------------------------
+// La consulta no acepta parametros (verificado: Connekta responde 400 a
+// `parametros=` en consultas personalizadas; solo lo soportan las estandar).
+// Asi que cada apertura descarga la ventana entera y filtra aca. Con 3 dias son
+// ~290 filas en <1 s; si la ventana se amplia a 30 dias son ~2.900 y el
+// operario esperaria varios segundos CADA VEZ.
+//
+// El cache lo evita, pero introduce un riesgo que no se puede aceptar: que una
+// factura recien emitida "no exista" porque el cache es viejo. Por eso la regla
+// no es solo TTL — ver `obtenerFilas`.
+const TTL_MS = 30_000;
+
+// Piso entre refrescos forzados. Sin el, teclear un numero equivocado dispara
+// una descarga completa por cada intento.
+//
+// 5 s es el balance: acota el peor caso a una descarga cada 5 s aunque veinte
+// operarios tecleen mal a la vez, y deja una ventana de ceguera corta para una
+// factura recien emitida. Subirlo ahorra trafico a costa de que el operario
+// espere mas para ver una factura nueva — y esperar frente a la estanteria es
+// justo lo que este modulo tiene que evitar.
+const MIN_REFRESCO_MS = 5_000;
+
+let cache = { filas: null, ts: 0, ultimoRefresco: 0 };
+
+/**
+ * Devuelve las filas de la ventana, usando cache cuando es seguro.
+ *
+ * @param {boolean} forzar Ignora el cache (respetando el piso de refresco).
+ */
+async function obtenerFilas(forzar = false) {
+  const ahora = Date.now();
+  const vigente = cache.filas && ahora - cache.ts < TTL_MS;
+
+  if (vigente && !forzar) return cache.filas;
+
+  if (forzar && vigente && ahora - cache.ultimoRefresco < MIN_REFRESCO_MS) {
+    return cache.filas;
+  }
+
+  const filas = await ejecutarConsulta(env.siesa.consultaFactura);
+  cache = { filas, ts: ahora, ultimoRefresco: ahora };
+  logger.info("Ventana de facturas actualizada desde Siesa", {
+    filas: filas.length,
+    forzado: forzar,
+  });
+  return filas;
+}
+
+/** Para tests y para el arranque en frio de una instancia. */
+export function limpiarCacheFacturas() {
+  cache = { filas: null, ts: 0, ultimoRefresco: 0 };
+}
 
 const texto = (valor) =>
   valor === null || valor === undefined ? null : String(valor).trim() || null;
@@ -93,23 +149,30 @@ export function normalizarFactura(filas) {
  * @returns {Promise<{ encabezado: object, items: Array<object>, filasCrudas: Array<object> }>}
  */
 export async function consultarFactura(numeroFactura, { tipoDocumento } = {}) {
-  const filas = await ejecutarConsulta(env.siesa.consultaFactura);
-
   const objetivo = String(numeroFactura).trim();
-  let candidatas = filas.filter(
-    (f) => String(f.CONSEC_DOCTO ?? "").trim() === objetivo,
-  );
 
-  if (tipoDocumento) {
-    candidatas = candidatas.filter(
-      (f) => texto(f.ID_TIPO_DOCTO) === String(tipoDocumento).trim(),
-    );
+  const buscar = (filas) => {
+    let r = filas.filter((f) => String(f.CONSEC_DOCTO ?? "").trim() === objetivo);
+    if (tipoDocumento) {
+      r = r.filter((f) => texto(f.ID_TIPO_DOCTO) === String(tipoDocumento).trim());
+    }
+    return r;
+  };
+
+  let candidatas = buscar(await obtenerFilas());
+
+  // Si no aparece, se reintenta con datos frescos ANTES de decir que no existe.
+  // Este es el caso que hace segura la cache: una factura emitida hace un
+  // minuto no puede reportarse como inexistente solo porque la ventana se
+  // descargo antes de que naciera.
+  if (candidatas.length === 0) {
+    candidatas = buscar(await obtenerFilas(true));
   }
 
   if (candidatas.length === 0) {
     throw noEncontrado(
-      `No se encontro la factura ${objetivo}. La consulta de Siesa solo cubre ` +
-        "los ultimos 2 dias: si es mas antigua, no va a aparecer.",
+      `No se encontro la factura ${objetivo}. La consulta de Siesa cubre una ` +
+        "ventana de dias recientes: si la factura es mas antigua, no aparece.",
     );
   }
 

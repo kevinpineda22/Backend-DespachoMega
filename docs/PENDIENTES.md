@@ -168,18 +168,39 @@ confundirse con un error del sistema (el mensaje ya aclara lo de la ventana).
 Medido el 6 de agosto de 2026: la consulta devolvió 108 líneas, **todas del
 mismo día**. Un documento del 26 de julio que se probó en Postman no aparece.
 
-### A decidir con la operación
+### Parametrizar la consulta NO es una opción
 
-- ¿Se despacha siempre el mismo día? Entonces 2 días sobra y no hay nada que
-  hacer.
-- ¿Se audita días después? Entonces hay que ampliar la ventana, y conviene
-  hacerlo **parametrizando la consulta en Siesa** para que reciba el número de
-  factura en vez de agrandar el rango — si no, cada búsqueda descarga una
-  ventana cada vez más grande.
+Probado el 10 de agosto de 2026: las consultas **personalizadas** de Connekta
+(`ejecutarconsulta`) **rechazan `parametros=` con HTTP 400**. Cualquier otro
+query param se ignora en silencio — devuelve el mismo resultado completo.
 
-Hoy el backend descarga la ventana completa y filtra por consecutivo
-(`facturaSiesa.service.js`). Con ~108 filas es irrelevante; con semanas de
-historial deja de serlo.
+Solo las consultas **estándar** (`ejecutarconsultaestandar`) aceptan
+`parametros=`. Así que el único lever es el `WHERE` de la consulta en Siesa.
+
+### Recomendación
+
+**Ampliar la ventana a ~30 días** cambiando `-2` por `-30` en el `DATEADD`. Es
+una línea y cubre el rezago realista de una auditoría.
+
+El costo es que cada búsqueda descarga más: medido el 10/8/2026, 3 días son
+**290 filas en ~1 s**; 30 días serían ~2.900 filas. Por eso ya está implementado
+el cache de ventana en `facturaSiesa.service.js` — la descarga se paga una vez
+cada 30 s, no en cada búsqueda:
+
+```
+1a busqueda (frio)    1028 ms
+2a busqueda (caliente)    0 ms
+```
+
+**El cache no puede hacer que una factura nueva "no exista".** Si el consecutivo
+buscado no está en la ventana cacheada, se refresca desde Siesa **antes** de
+responder que no existe. Un piso de 5 s evita que un número mal tecleado
+dispare una descarga por intento.
+
+Si algún día 30 días tampoco alcanzan, el camino no es seguir agrandando el
+rango: es pedirle a Siesa una **segunda consulta** que reciba el número de
+factura como parámetro declarado, y usarla solo como respaldo cuando la rápida
+no encuentra.
 
 ---
 
