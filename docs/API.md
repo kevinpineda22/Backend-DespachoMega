@@ -71,13 +71,59 @@ Responde `{ encabezado, items }`.
 Abre la factura, o **reanuda** el despacho que ya estaba en curso.
 
 ```json
-{ "numero_factura": "1520045", "modo": "picking" }
+{ "numero_factura": "1520045", "modo": "picking", "tipo_documento": "P05" }
 ```
+
+`tipo_documento` es opcional: solo hace falta para desempatar si el consecutivo
+existe en varias series.
 
 - `201` si se creó, `200` si se reanudó.
 - Responde `{ despacho, items, reanudado }`.
 - `409` si la factura ya fue procesada en ese modo.
 - `403` si el despacho en curso es de otro operario.
+
+#### `modo: "picking"` — contra la factura
+
+Trae la factura de Siesa y crea las líneas con las cantidades facturadas.
+
+#### `modo: "auditoria"` — contra el picking, **no** contra la factura
+
+Una auditoría verifica **lo que se alistó**, así que exige un picking ya
+finalizado de esa misma factura:
+
+| Estado del picking | Respuesta |
+| ------------------ | --------- |
+| No existe | `409` *"no tiene picking registrado"* |
+| `en_proceso` | `409` *"todavía está en proceso"* |
+| `rechazado` | `409` *"está en estado rechazado y no se puede auditar"* |
+| Cerró sin alistar nada | `409` *"no hay nada que auditar"* |
+| `completado`, `con_novedad`, `aprobado` | Abre |
+
+Al abrir:
+
+- **No consulta Siesa.** Las líneas salen del picking. Esto permite auditar
+  despachos viejos, aunque la factura ya se haya caído de la ventana de días de
+  Siesa (ver `PENDIENTES.md` §1-ter).
+- `cantidad_solicitada` de cada línea = **lo que el picker validó**, no lo
+  facturado. Si el picking cerró con un faltante ya reportado, auditar contra la
+  factura lo marcaría como faltante otra vez.
+- Solo entran las líneas con cantidad validada mayor a cero: lo que nunca se
+  alistó no tiene nada físico que verificar.
+- `despacho.despacho_origen_id` apunta al picking verificado.
+- La respuesta agrega `picking` con el contexto para el auditor:
+
+```json
+{
+  "picking": {
+    "id": "uuid",
+    "estado": "con_novedad",
+    "operario_id": "uuid",
+    "finalizado_at": "2026-08-10T11:19:17-05:00",
+    "lineas_factura": 24,
+    "lineas_alistadas": 3
+  }
+}
+```
 
 ### `GET /api/despachos`
 

@@ -61,6 +61,10 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
     return { despacho: vigente, items, reanudado: true };
   }
 
+  if (modo === "auditoria") {
+    return abrirAuditoria({ numeroFactura, usuario });
+  }
+
   const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
     tipoDocumento,
   });
@@ -96,6 +100,121 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
     despacho,
     items: await despachosRepo.itemsDe(despacho.id),
     reanudado: false,
+  };
+}
+
+// Estados en los que un picking ya termino y puede auditarse.
+const PICKING_AUDITABLE = ["completado", "con_novedad", "aprobado"];
+
+/**
+ * Abre una auditoria sobre un picking YA FINALIZADO.
+ *
+ * NO CONSULTA SIESA, y eso es deliberado por dos razones:
+ *
+ *   1. SEMANTICA. El auditor no verifica la factura, verifica **lo que el
+ *      picker efectivamente alisto**. Si el picking cerro con faltantes, lo que
+ *      salio de la bodega es lo validado, no lo facturado. Auditar contra la
+ *      factura marcaria como faltante algo que ya se reporto y gestiono.
+ *
+ *   2. ALCANCE. La consulta POS de Siesa solo conserva ~4 dias (ver
+ *      docs/PENDIENTES.md §1-ter). Atarse a ella dejaria sin auditar cualquier
+ *      despacho de la semana pasada. Contra nuestra propia base, la auditoria
+ *      funciona mientras exista el picking.
+ *
+ * Solo entran las lineas con cantidad validada mayor a cero: una linea que
+ * nunca se alisto no tiene nada fisico que verificar, y mostrarla como 0/0
+ * seria ruido que el auditor tiene que aprender a ignorar.
+ */
+async function abrirAuditoria({ numeroFactura, usuario }) {
+  const picking = await despachosRepo.despachoVigente(numeroFactura, "picking");
+
+  if (!picking) {
+    throw conflicto(
+      `La factura ${numeroFactura} no tiene picking registrado. ` +
+        "Primero hay que alistarla antes de poder auditarla.",
+    );
+  }
+
+  if (picking.estado === "en_proceso") {
+    throw conflicto(
+      `El picking de la factura ${numeroFactura} todavia esta en proceso. ` +
+        "Se puede auditar cuando el operario lo finalice.",
+    );
+  }
+
+  if (!PICKING_AUDITABLE.includes(picking.estado)) {
+    throw conflicto(
+      `El picking de la factura ${numeroFactura} esta en estado ` +
+        `${picking.estado} y no se puede auditar.`,
+    );
+  }
+
+  const itemsPicking = await despachosRepo.itemsDe(picking.id);
+  const alistados = itemsPicking.filter((i) => Number(i.cantidad_validada) > 0);
+
+  if (alistados.length === 0) {
+    throw conflicto(
+      `El picking de la factura ${numeroFactura} cerro sin alistar ningun ` +
+        "producto. No hay nada que auditar.",
+    );
+  }
+
+  const despacho = await despachosRepo.crearConItems(
+    {
+      numero_factura: picking.numero_factura,
+      tipo_documento: picking.tipo_documento,
+      fecha_factura: picking.fecha_factura,
+      modo: "auditoria",
+      estado: "en_proceso",
+      operario_id: usuario.operarioId,
+      cliente_nit: picking.cliente_nit,
+      cliente_nombre: picking.cliente_nombre,
+      sede: picking.sede,
+      bodega: picking.bodega,
+      total_items: alistados.length,
+      items_validados: 0,
+      // El snapshot de Siesa ya lo guarda el picking; `despacho_origen_id`
+      // lleva hasta el. Duplicarlo solo ocuparia espacio.
+      snapshot_siesa: null,
+      despacho_origen_id: picking.id,
+    },
+    alistados.map((i, indice) => ({
+      linea: indice + 1,
+      codigo_item: i.codigo_item,
+      descripcion: i.descripcion,
+      unidad: i.unidad,
+      // Lo alistado pasa a ser lo exigido: es contra eso que se verifica.
+      cantidad_solicitada: i.cantidad_validada,
+      precio_unitario: i.precio_unitario,
+    })),
+  );
+
+  await eventosRepo.registrar({
+    despachoId: despacho.id,
+    actorUserId: usuario.userId,
+    actorCorreo: usuario.correo,
+    evento: EVENTO.DESPACHO_ABIERTO,
+    payload: {
+      numero_factura: numeroFactura,
+      modo: "auditoria",
+      total_items: alistados.length,
+      picking_id: picking.id,
+      picking_estado: picking.estado,
+    },
+  });
+
+  return {
+    despacho,
+    items: await despachosRepo.itemsDe(despacho.id),
+    reanudado: false,
+    picking: {
+      id: picking.id,
+      estado: picking.estado,
+      operario_id: picking.operario_id,
+      finalizado_at: picking.finalizado_at,
+      lineas_factura: itemsPicking.length,
+      lineas_alistadas: alistados.length,
+    },
   };
 }
 

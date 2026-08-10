@@ -11,7 +11,8 @@ const TABLA_APROBACIONES = "despacho_mega_aprobaciones";
 const CAMPOS_DESPACHO = `
   id, numero_factura, tipo_documento, fecha_factura, modo, estado, operario_id,
   cliente_nit, cliente_nombre, sede, bodega, total_items, items_validados,
-  observaciones, iniciado_at, finalizado_at, created_at, updated_at
+  observaciones, despacho_origen_id, iniciado_at, finalizado_at,
+  created_at, updated_at
 `;
 
 const CAMPOS_ITEM = `

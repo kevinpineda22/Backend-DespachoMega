@@ -43,6 +43,12 @@ de Siesa. Detalle y verificación en `PENDIENTES.md` §1.
 y queda registrado como `excede_cantidad`. Cambiar esto no es agregar un valor
 al enum: la regla vive en `validar()`.
 
+**La auditoría se abre contra el picking, no contra la factura.** Exige un
+picking finalizado y verifica **lo alistado**, no lo facturado — si el picking
+cerró con un faltante ya reportado, auditar contra la factura lo marcaría como
+faltante otra vez. Por eso **no consulta Siesa**, lo que además permite auditar
+despachos más viejos que la ventana de días de la consulta POS.
+
 **Los escaneos rechazados se guardan.** Son evidencia de capacitación, rotulado
 o factura mal armada. No borrarlos.
 
