@@ -1,6 +1,6 @@
 # Pendientes — Despacho Mega
 
-Estado al 6 de agosto de 2026. Ordenados por lo que bloquea a lo que no.
+Estado al 10 de agosto de 2026. Ordenados por lo que bloquea a lo que no.
 
 Convención: **[B]** bloqueante, **[A]** alto, **[M]** medio, **[B-]** bajo.
 
@@ -153,54 +153,62 @@ políticas de escritura, así que la anon key **no puede insertar**.
 
 ---
 
-## 1-ter. [A] La ventana de la consulta es de 2 días — decidir si alcanza
+## 1-ter. [A] El histórico NO está en las tablas POS — ampliar la ventana no sirve
 
-`merkahorro_Despacho_Factura_dev` filtra en su propio `WHERE`:
+**Ampliar el `DATEADD` fue un callejón sin salida, y la razón importa.**
 
-```sql
-CAST(f9820_id_fecha_docto AS VARCHAR(8)) >= CONVERT(varchar(8), DATEADD(day, -2, GETDATE()), 112)
-```
-
-**Una factura más vieja que 2 días no se puede despachar ni auditar.** El
-operario recibe "No se encontró la factura N", que es correcto pero puede
-confundirse con un error del sistema (el mensaje ya aclara lo de la ventana).
-
-Medido el 6 de agosto de 2026: la consulta devolvió 108 líneas, **todas del
-mismo día**. Un documento del 26 de julio que se probó en Postman no aparece.
-
-### Parametrizar la consulta NO es una opción
-
-Probado el 10 de agosto de 2026: las consultas **personalizadas** de Connekta
-(`ejecutarconsulta`) **rechazan `parametros=` con HTTP 400**. Cualquier otro
-query param se ignora en silencio — devuelve el mismo resultado completo.
-
-Solo las consultas **estándar** (`ejecutarconsultaestandar`) aceptan
-`parametros=`. Así que el único lever es el `WHERE` de la consulta en Siesa.
-
-### Recomendación
-
-**Ampliar la ventana a ~30 días** cambiando `-2` por `-30` en el `DATEADD`. Es
-una línea y cubre el rezago realista de una auditoría.
-
-El costo es que cada búsqueda descarga más: medido el 10/8/2026, 3 días son
-**290 filas en ~1 s**; 30 días serían ~2.900 filas. Por eso ya está implementado
-el cache de ventana en `facturaSiesa.service.js` — la descarga se paga una vez
-cada 30 s, no en cada búsqueda:
+El `WHERE` de la consulta se amplió a 30 días y **funciona perfectamente**. Lo
+demuestran las columnas de diagnóstico que se agregaron a la consulta
+(`db/siesa/merkahorro_Despacho_Factura_dev.sql`), medidas el 10/8/2026:
 
 ```
-1a busqueda (frio)    1028 ms
-2a busqueda (caliente)    0 ms
+FechaServidor  -> 20260810     el servidor está en la fecha correcta
+CorteAplicado  -> 20260711     el filtro sí aplica los 30 días
+Día más viejo con datos -> 20260807
 ```
 
-**El cache no puede hacer que una factura nueva "no exista".** Si el consecutivo
-buscado no está en la ventana cacheada, se refresca desde Siesa **antes** de
-responder que no existe. Un piso de 5 s evita que un número mal tecleado
-dispare una descarga por intento.
+El corte es el 11 de julio y el documento más antiguo es del 7 de agosto. **El
+filtro no está recortando nada: simplemente no existen documentos POS más viejos
+que ~4 días.**
 
-Si algún día 30 días tampoco alcanzan, el camino no es seguir agrandando el
-rango: es pedirle a Siesa una **segunda consulta** que reciba el número de
-factura como parámetro declarado, y usarla solo como respaldo cuando la rápida
-no encuentra.
+`t9820_pdv_d_doctos` / `t9830_pdv_d_movto_venta` son tablas de **staging del
+punto de venta**. Los documentos se contabilizan y salen de ahí. Poner `-90` o
+`-365` daría exactamente el mismo resultado.
+
+### Consecuencia operativa
+
+**Una factura de más de ~4 días no se puede abrir en Despacho Mega.** Si el
+negocio audita con más rezago que eso, hace falta otra fuente — no otro rango.
+
+### Si hace falta histórico
+
+Pedirle a Siesa una **segunda consulta sobre las tablas de facturación**
+(`t350_co_docto` / `t351_co_docto_movto` y afines), que es donde quedan los
+documentos ya contabilizados. Mismas columnas lógicas que la actual: encabezado
+repetido por línea, con `f350_id_consec_docto`, `f120_id`, cantidad, unidad y
+precio.
+
+El backend la usaría como **respaldo**: primero la consulta POS (rápida, cubre
+el flujo normal del día); si el consecutivo no aparece, recién ahí la histórica.
+Ese encadenamiento ya tiene su lugar natural en `consultarFactura()`, donde hoy
+se fuerza el refresco antes de dar por inexistente una factura.
+
+### Lo que sí quedó resuelto
+
+- El `-30` está publicado y activo.
+- Las columnas `FechaServidor` y `CorteAplicado` quedan en la consulta: la
+  respuesta ahora dice por sí misma qué fecha cree el servidor que es y desde
+  cuándo filtra. El backend las ignora.
+
+> **Dos trampas que costaron tiempo y conviene no repetir:**
+>
+> 1. **Había una URL de Connekta de pruebas.** Postman apuntaba ahí y devolvía
+>    datos congelados de julio, mientras el backend —que usa la de producción—
+>    traía agosto. Dos fuentes distintas dando respuestas distintas a la misma
+>    consulta. La URL de producción es
+>    `https://servicios.siesacloud.com/api/connekta/v3`.
+> 2. **La factura 75794 nunca existió en producción**: era del ambiente de
+>    pruebas. Se perdió un rato buscándola en los datos reales.
 
 ---
 
