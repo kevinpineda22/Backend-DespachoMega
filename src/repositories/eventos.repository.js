@@ -13,6 +13,7 @@ export const EVENTO = {
   DESPACHO_ABIERTO: "despacho_abierto",
   DESPACHO_REANUDADO: "despacho_reanudado",
   ITEM_VALIDADO: "item_validado",
+  ITEM_AJUSTADO: "item_ajustado",
   ESCANEO_RECHAZADO: "escaneo_rechazado",
   ALERTA_CREADA: "alerta_creada",
   ALERTA_ACTUALIZADA: "alerta_actualizada",

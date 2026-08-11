@@ -49,6 +49,27 @@ export const validar = asyncHandler(async (req, res) => {
   res.json({ ok: true, data });
 });
 
+/** Resuelve un codigo a la linea que le toca, sin mutar. Para abrir el modal. */
+export const resolver = asyncHandler(async (req, res) => {
+  const data = await despachoService.resolver(
+    req.params.id,
+    req.query.codigo,
+    req.usuario,
+  );
+  res.json({ ok: true, data });
+});
+
+/** Ajusta el total de una linea (0 = devolver a pendientes). */
+export const ajustar = asyncHandler(async (req, res) => {
+  const data = await despachoService.ajustar(
+    req.params.id,
+    req.params.itemId,
+    req.body.cantidad,
+    req.usuario,
+  );
+  res.json({ ok: true, data });
+});
+
 export const finalizar = asyncHandler(async (req, res) => {
   const data = await despachoService.finalizar(req.params.id, req.body, req.usuario);
   res.json({ ok: true, data });

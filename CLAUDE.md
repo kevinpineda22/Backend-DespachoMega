@@ -10,7 +10,13 @@ trazabilidad por usuario, alertas a inventario y analítica.
 | `README.md` | Arranque, arquitectura, seguridad, despliegue |
 | `docs/API.md` | Contrato de todos los endpoints |
 | `docs/PENDIENTES.md` | **Lo más importante.** Cada hallazgo medido, con fecha, y lo que falta |
+| `docs/ESTADO-REPOS.md` | **Antes de desplegar.** Qué versión va adelante entre los dos repos, endpoint por endpoint |
+| `docs/PENDIENTES-OPERARIO.md` | Lo que el frontend del operario le pide al backend |
 | `../Pagina-web_React/docs/DESPACHO-MEGA.md` | Visión funcional + frontend + cómo se dan los permisos |
+
+**El módulo son dos repositorios que se despliegan por separado.** El frontend
+tolera un backend adelantado; al revés no. Ante endpoints nuevos, **backend
+primero**. `ESTADO-REPOS.md` lleva la cuenta.
 
 El frontend vive en el repositorio `Pagina-web_React`, rutas
 `/despacho-mega/operario` y `/despacho-mega/admin`.

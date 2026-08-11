@@ -156,3 +156,9 @@ que no hace falta tocarlo.
 
 Ver [docs/PENDIENTES.md](docs/PENDIENTES.md). El bloqueante para poder probar de
 punta a punta es la consulta de facturas en Siesa.
+
+**Antes de desplegar**, leer [docs/ESTADO-REPOS.md](docs/ESTADO-REPOS.md): el
+módulo son dos repositorios que se despliegan por separado, y ahí está la
+comparación de qué endpoint publicó el backend contra cuál ya consume el
+frontend. Hoy el frontend va adelante — hay endpoints sin commitear acá que la UI
+ya usa.

@@ -21,6 +21,9 @@ export const modo = z.enum(["picking", "auditoria"]);
 
 export const paramsId = z.object({ id: uuid });
 
+// Ajuste de una linea concreta: hacen falta los dos identificadores.
+export const paramsIdItem = z.object({ id: uuid, itemId: uuid });
+
 // `tipo_documento` solo hace falta para desempatar: en Siesa conviven varias
 // series (P02, P05, P08, PN5) con consecutivos independientes, asi que un
 // numero puede, en principio, apuntar a mas de un documento. El backend pide
@@ -43,6 +46,19 @@ export const validarItemBody = z.object({
 
 export const finalizarDespachoBody = z.object({
   observaciones: z.string().trim().max(1000).optional(),
+});
+
+// Ajuste directo de una linea: `cantidad` es el NUEVO total absoluto, no un
+// incremento. 0 = devolver la linea a pendientes. El tope contra lo solicitado
+// lo pone el servicio, no el esquema (necesita leer la linea).
+export const ajustarItemBody = z.object({
+  cantidad: z.coerce.number().min(0, "La cantidad no puede ser negativa."),
+});
+
+// Resolver un codigo sin mutar: para abrir el modal de cantidad al escanear un
+// codigo de barras (el front no tiene el mapeo barra -> item).
+export const resolverCodigoQuery = z.object({
+  codigo: z.string().trim().min(1, "Debe indicar un codigo."),
 });
 
 export const crearAlertaBody = z.object({

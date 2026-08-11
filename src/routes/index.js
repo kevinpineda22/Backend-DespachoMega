@@ -22,6 +22,7 @@ import {
   abrirDespachoBody,
   actualizarAlertaBody,
   actualizarOperarioBody,
+  ajustarItemBody,
   aprobarBody,
   bandejaNovedadesQuery,
   coberturaQuery,
@@ -34,8 +35,10 @@ import {
   listarFacturasQuery,
   numeroFactura,
   paramsId,
+  paramsIdItem,
   paramsNumeroFactura,
   rangoFechasQuery,
+  resolverCodigoQuery,
   sincronizarCoberturaBody,
   tipoDocumento,
   validarItemBody,
@@ -89,6 +92,21 @@ router.post(
   "/despachos/:id/validar",
   validate({ params: paramsId, body: validarItemBody }),
   despachos.validar,
+);
+
+// Resolver un codigo (barra o item) a su linea, sin mutar: abre el modal de
+// cantidad al escanear, no solo al teclear el codigo del item.
+router.get(
+  "/despachos/:id/resolver",
+  validate({ params: paramsId, query: resolverCodigoQuery }),
+  despachos.resolver,
+);
+
+// Ajustar el total de una linea. 0 = devolver a pendientes.
+router.post(
+  "/despachos/:id/items/:itemId/ajustar",
+  validate({ params: paramsIdItem, body: ajustarItemBody }),
+  despachos.ajustar,
 );
 
 router.post(

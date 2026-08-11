@@ -234,7 +234,39 @@ export async function obtener(id, usuario) {
     despachosRepo.aprobacionesDe(id),
   ]);
 
-  return { despacho, items, escaneos, alertas, aprobaciones };
+  // Si es una auditoria, se adjunta el contexto del picking de origen (el banner
+  // "Verificando el alistado"). Se resuelve ACA y no en el cliente porque el
+  // picking puede ser de OTRO operario, y el cliente solo puede leer lo suyo.
+  // Con esto, al recargar una auditoria en curso el banner vuelve a aparecer.
+  const picking = await contextoPicking(despacho);
+
+  return { despacho, items, escaneos, alertas, aprobaciones, picking };
+}
+
+/**
+ * Arma el resumen del picking de origen de una auditoria, con la misma forma que
+ * devuelve `abrir`. Devuelve `null` si el despacho no es una auditoria o si el
+ * origen ya no existe. Usa el repo con `service_role`: no aplica ownership, lo
+ * cual es correcto — el auditor tiene que ver contra que esta verificando aunque
+ * el picking sea de otra persona.
+ */
+async function contextoPicking(despacho) {
+  if (!despacho.despacho_origen_id) return null;
+
+  const origen = await despachosRepo.porId(despacho.despacho_origen_id);
+  if (!origen) return null;
+
+  const itemsOrigen = await despachosRepo.itemsDe(origen.id);
+  return {
+    id: origen.id,
+    estado: origen.estado,
+    operario_id: origen.operario_id,
+    finalizado_at: origen.finalizado_at,
+    lineas_factura: itemsOrigen.length,
+    lineas_alistadas: itemsOrigen.filter(
+      (i) => Number(i.cantidad_validada) > 0,
+    ).length,
+  };
 }
 
 export async function listar(filtros) {
@@ -434,6 +466,154 @@ export async function validar(id, { codigo, metodo, cantidad }, usuario) {
         : `Van ${nuevaCantidad} de ${solicitada} de ${codigoItem}${aporte}.`,
     item: actualizado,
     despacho: despachoActualizado,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Resolver un codigo SIN mutar
+// ---------------------------------------------------------------------------
+
+/**
+ * Traduce un codigo (de barras o de item) a la linea de la factura que le
+ * corresponde, SIN tocar nada.
+ *
+ * POR QUE EXISTE
+ * El frontend puede matchear lo que el operario teclea contra el `codigo_item`
+ * de las lineas que ya tiene, pero NO contra un codigo de barras: el mapeo
+ * barra -> item vive en el catalogo del backend (`resolverCodigo`), y la factura
+ * de Siesa solo trae el `codigo_item`. Sin esto, escanear una barra no podia
+ * abrir el modal de cantidad — solo sumaba de a uno.
+ *
+ * Devuelve `item_id` (la primera linea con cupo, en orden de factura, igual que
+ * `validar`) para que el front abra el modal en la linea correcta.
+ */
+export async function resolver(id, codigo, usuario) {
+  const despacho = await despachosRepo.porId(id);
+  if (!despacho) throw noEncontrado("Despacho no encontrado.");
+  asegurarAcceso(despacho, usuario);
+
+  const { codigoItem, factor, unidad, origen } = await resolverCodigo(codigo);
+  const items = await despachosRepo.itemsDe(id);
+  const coincidencias = items.filter((i) => i.codigo_item === codigoItem);
+
+  if (coincidencias.length === 0) {
+    // Misma distincion que `validar`: "codigo ilegible" y "producto equivocado"
+    // se resuelven distinto, y al operario le importa cual de los dos es.
+    return {
+      pertenece: false,
+      resultado: origen === "directo" ? "no_encontrado" : "no_pertenece",
+      codigo_item: codigoItem,
+      mensaje:
+        origen === "directo"
+          ? `El codigo ${codigo} no corresponde a ningun producto conocido.`
+          : `El producto ${codigoItem} no hace parte de la factura ${despacho.numero_factura}.`,
+    };
+  }
+
+  const objetivo =
+    coincidencias.find(
+      (i) => Number(i.cantidad_validada) < Number(i.cantidad_solicitada),
+    ) || coincidencias[0];
+
+  return {
+    pertenece: true,
+    resultado: "ok",
+    codigo_item: codigoItem,
+    item_id: objetivo.id,
+    // Informativos: el modal cuenta en unidades base (manda `codigo_item` a
+    // `validar`, factor 1), pero saber que se escaneo un P12 ayuda a la UI.
+    factor,
+    unidad: unidad || objetivo.unidad,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ajustar una linea (devolver a pendientes / corregir de mas)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fija el total ABSOLUTO validado de una linea. `cantidad` no es un incremento:
+ * es donde tiene que quedar la linea. 0 la devuelve a pendientes.
+ *
+ * POR QUE ABSOLUTO Y NO UN DECREMENTO
+ * El operario no piensa "resta 3": piensa "esto va en 5" o "esto no lo aliste,
+ * mandalo de vuelta". Un total absoluto es idempotente (reintentar no acumula) y
+ * evita el clasico bug de restar dos veces por un doble tap.
+ *
+ * Baja de cantidad tambien es trazable: queda un evento `item_ajustado` con el
+ * de/a, porque devolver mercancia es tan auditable como despacharla.
+ */
+export async function ajustar(id, itemId, cantidadNueva, usuario) {
+  const despacho = await despachosRepo.porId(id);
+  if (!despacho) throw noEncontrado("Despacho no encontrado.");
+  asegurarAcceso(despacho, usuario);
+
+  if (despacho.estado !== "en_proceso") {
+    throw conflicto(
+      `El despacho esta en estado ${despacho.estado} y ya no admite ajustes.`,
+    );
+  }
+
+  const items = await despachosRepo.itemsDe(id);
+  const objetivo = items.find((i) => i.id === itemId);
+  if (!objetivo) throw noEncontrado("La linea no pertenece a este despacho.");
+
+  const solicitada = Number(objetivo.cantidad_solicitada);
+
+  // La misma regla que en `validar`: no se despacha mas de lo facturado. Aca
+  // aplica al total, no al incremento.
+  if (cantidadNueva > solicitada) {
+    throw solicitudInvalida(
+      `La linea ${objetivo.codigo_item} pide ${solicitada}; no puede quedar en ${cantidadNueva}.`,
+    );
+  }
+
+  const anterior = Number(objetivo.cantidad_validada);
+  const estadoItem =
+    cantidadNueva <= 0
+      ? "pendiente"
+      : cantidadNueva >= solicitada
+        ? "completo"
+        : "parcial";
+
+  const actualizado = await despachosRepo.actualizarItem(itemId, {
+    cantidad_validada: cantidadNueva,
+    estado_item: estadoItem,
+    // Devolver a pendientes borra la firma: la linea vuelve a estar "sin tocar".
+    validado_por: cantidadNueva > 0 ? usuario.operarioId : null,
+    validado_at: cantidadNueva > 0 ? new Date().toISOString() : null,
+  });
+
+  const completos = items.filter(
+    (i) => (i.id === itemId ? estadoItem : i.estado_item) === "completo",
+  ).length;
+
+  const despachoActualizado = await despachosRepo.actualizar(id, {
+    items_validados: completos,
+  });
+
+  await eventosRepo.registrar({
+    despachoId: id,
+    actorUserId: usuario.userId,
+    actorCorreo: usuario.correo,
+    evento: EVENTO.ITEM_AJUSTADO,
+    payload: {
+      codigoItem: objetivo.codigo_item,
+      linea: objetivo.linea,
+      de: anterior,
+      a: cantidadNueva,
+      estadoItem,
+    },
+  });
+
+  return {
+    resultado: "ajustado",
+    item: actualizado,
+    despacho: despachoActualizado,
+    mensaje:
+      cantidadNueva <= 0
+        ? `${objetivo.codigo_item} devuelto a pendientes.`
+        : `${objetivo.codigo_item} quedo en ${cantidadNueva} de ${solicitada}.`,
   };
 }
 

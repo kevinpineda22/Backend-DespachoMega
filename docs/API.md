@@ -134,7 +134,12 @@ Responde `{ ok, despachos, total }`.
 
 ### `GET /api/despachos/:id`
 
-Detalle completo: `{ despacho, items, escaneos, alertas, aprobaciones }`.
+Detalle completo: `{ despacho, items, escaneos, alertas, aprobaciones, picking }`.
+
+`picking` trae el contexto del picking de origen **solo en auditorías** (mismo
+formato que devuelve `POST /despachos` en modo auditoría); es `null` en picking.
+Se resuelve en el servidor porque el picking puede ser de otro operario. Sirve
+para que el banner "Verificando el alistado" reaparezca al recargar.
 
 Un operario solo puede ver los suyos; el admin ve todos.
 
@@ -158,6 +163,40 @@ el rechazo quedó registrado; el resultado va en el cuerpo:
 | `excede_cantidad` | El escaneo supera lo que falta. No se aplica nada.  |
 
 Todos los casos quedan en `despacho_mega_escaneos`.
+
+### `GET /api/despachos/:id/resolver?codigo=<barra|item>`
+
+Traduce un código (de barras o de ítem) a la línea que le corresponde, **sin
+mutar nada**. Existe para que el frontend abra el modal de cantidad al escanear
+una barra: el mapeo barra → ítem vive en el catálogo del backend, y la factura
+solo trae el `codigo_item`.
+
+Responde `200` siempre; el resultado va en el cuerpo:
+
+```json
+{ "pertenece": true, "resultado": "ok", "codigo_item": "40027",
+  "item_id": "uuid", "factor": 12, "unidad": "P12" }
+```
+
+| `resultado`     | Significado                                             |
+| --------------- | ------------------------------------------------------- |
+| `ok`            | Pertenece. Trae `item_id` (primera línea con cupo).      |
+| `no_pertenece`  | Producto conocido, pero no está en esta factura.        |
+| `no_encontrado` | El código no resuelve a ningún producto.                |
+
+### `POST /api/despachos/:id/items/:itemId/ajustar`
+
+```json
+{ "cantidad": 0 }
+```
+
+Fija el total **absoluto** validado de una línea (no un incremento). `0` la
+**devuelve a pendientes**. Recalcula `estado_item` e `items_validados` y deja un
+evento `item_ajustado` con el de/a.
+
+- `400` si `cantidad` supera lo solicitado.
+- `409` si el despacho ya no está `en_proceso`.
+- Responde `{ resultado: "ajustado", item, despacho, mensaje }`.
 
 ### `POST /api/despachos/:id/finalizar`
 
