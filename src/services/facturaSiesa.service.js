@@ -215,17 +215,39 @@ export async function consultarFactura(numeroFactura, { tipoDocumento } = {}) {
     return r;
   };
 
-  let candidatas = buscar(await obtenerFilas());
+  let filas = await obtenerFilas();
+  let candidatas = buscar(filas);
 
   // Si no aparece, se reintenta con datos frescos ANTES de decir que no existe.
   // Este es el caso que hace segura la cache: una factura emitida hace un
   // minuto no puede reportarse como inexistente solo porque la ventana se
   // descargo antes de que naciera.
   if (candidatas.length === 0) {
-    candidatas = buscar(await obtenerFilas(true));
+    filas = await obtenerFilas(true);
+    candidatas = buscar(filas);
   }
 
   if (candidatas.length === 0) {
+    // EL CASO QUE JUSTIFICA EL SELECTOR DE CAJA.
+    // Si el numero existe pero en OTRA caja, decir "no se encontro" manda al
+    // operario a buscar un problema que no existe: la factura esta ahi, lo que
+    // esta mal es la caja que eligio —o el numero que tecleo—. Nombrar la caja
+    // correcta convierte un callejon sin salida en una correccion de un clic.
+    if (tipoDocumento) {
+      const enOtraCaja = filas.filter(
+        (f) => String(f.CONSEC_DOCTO ?? "").trim() === objetivo,
+      );
+
+      if (enOtraCaja.length > 0) {
+        const cajas = [...new Set(enOtraCaja.map((f) => texto(f.ID_TIPO_DOCTO)))];
+        throw conflicto(
+          `La factura ${objetivo} no es de la caja ${tipoDocumento}: ` +
+            `esta en ${cajas.join(" o ")}. Verifique la caja o el numero.`,
+          { cajas_correctas: cajas },
+        );
+      }
+    }
+
     throw noEncontrado(
       `No se encontro la factura ${objetivo}. La consulta de Siesa cubre una ` +
         "ventana de dias recientes: si la factura es mas antigua, no aparece.",
@@ -259,4 +281,37 @@ export async function consultarFactura(numeroFactura, { tipoDocumento } = {}) {
   }
 
   return { encabezado, items, filasCrudas: delDocumento };
+}
+
+/**
+ * Cajas con documentos en la ventana actual de Siesa.
+ *
+ * Sale de la MISMA ventana cacheada que usa `consultarFactura`, así que el
+ * selector del operario no cuesta una consulta extra: cuando la pantalla carga,
+ * la ventana ya está en memoria.
+ *
+ * Se listan solo las cajas que TIENEN documentos ahora, no una lista fija en el
+ * código. Si mañana habilitan una caja nueva en Siesa aparece sola, y si una
+ * deja de usarse desaparece — un selector con opciones que no llevan a ninguna
+ * factura es una invitación a equivocarse.
+ *
+ * @returns {Promise<Array<{ codigo: string, documentos: number }>>}
+ */
+export async function cajasDisponibles() {
+  const filas = await obtenerFilas();
+
+  // Se cuentan DOCUMENTOS, no líneas: "P05 · 149" tiene que significar 149
+  // facturas, no 149 renglones de producto.
+  const documentos = new Map();
+  for (const fila of filas) {
+    const caja = texto(fila.ID_TIPO_DOCTO);
+    if (!caja) continue;
+
+    if (!documentos.has(caja)) documentos.set(caja, new Set());
+    documentos.get(caja).add(String(fila.CONSEC_DOCTO ?? "").trim());
+  }
+
+  return [...documentos.entries()]
+    .map(([codigo, consecutivos]) => ({ codigo, documentos: consecutivos.size }))
+    .sort((a, b) => a.codigo.localeCompare(b.codigo));
 }

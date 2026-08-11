@@ -6,7 +6,10 @@
  * `async` deja el request colgado hasta el timeout en vez de responder 500.
  */
 import * as despachoService from "../services/despacho.service.js";
-import { consultarFactura } from "../services/facturaSiesa.service.js";
+import {
+  consultarFactura,
+  cajasDisponibles,
+} from "../services/facturaSiesa.service.js";
 
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
@@ -17,6 +20,16 @@ export const previsualizarFactura = asyncHandler(async (req, res) => {
     tipoDocumento: req.query.tipo_documento,
   });
   res.json({ ok: true, data: { encabezado, items } });
+});
+
+/**
+ * Cajas con documentos en la ventana actual, para el selector del operario.
+ *
+ * No exige admin: la usa la pantalla del operario, que ya pasó por `requireAuth`
+ * y solo va a ver códigos de caja y cuántos documentos tiene cada una.
+ */
+export const listarCajas = asyncHandler(async (_req, res) => {
+  res.json({ ok: true, data: await cajasDisponibles() });
 });
 
 export const abrir = asyncHandler(async (req, res) => {

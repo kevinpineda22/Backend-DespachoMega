@@ -62,6 +62,11 @@ router.use(requireAuth);
 router.get("/yo", operarios.yo);
 
 // --- Facturas -------------------------------------------------------------
+//
+// VA ANTES de `/facturas/:numero`. Si estuviera después, Express tomaría
+// "cajas" como el valor de `:numero` y la ruta nunca se alcanzaría.
+router.get("/facturas/cajas", despachos.listarCajas);
+
 router.get(
   "/facturas/:numero",
   validate({

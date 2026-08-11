@@ -33,6 +33,16 @@ export const tipoDocumento = z.string().trim().max(10);
 export const abrirDespachoBody = z.object({
   numero_factura: numeroFactura,
   modo,
+
+  // OBLIGATORIA al abrir un picking. El numero solo alcanza para encontrar la
+  // factura —medido: 0 consecutivos repetidos en 468 documentos— pero no para
+  // confirmar que es LA que el operario tiene en la mano. Con la caja, teclear
+  // 77031 estando en la caja P05 deja de abrir una factura ajena y valida: el
+  // backend responde en que caja esta ese numero y el operario corrige.
+  //
+  // Opcional en el esquema porque la AUDITORIA no la pide: esa se abre contra
+  // el picking ya finalizado, que ya tiene la caja resuelta. Exigirla ahi seria
+  // pedir dos veces el mismo dato. La obliga `abrir()` solo para picking.
   tipo_documento: tipoDocumento.optional(),
 });
 

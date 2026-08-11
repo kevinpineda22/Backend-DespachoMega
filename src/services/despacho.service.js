@@ -38,6 +38,20 @@ function asegurarAcceso(despacho, usuario) {
  *           tipoDocumento?: string }} args
  */
 export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
+  // La caja se exige SOLO para picking, y solo al crear.
+  //
+  // En auditoria no se pide porque esa se abre contra el picking finalizado,
+  // que ya tiene la caja resuelta: volver a preguntarla seria pedir dos veces
+  // el mismo dato y abrir la puerta a que las dos respuestas no coincidan.
+  //
+  // Se valida antes de tocar la base: si falta, no tiene sentido ni buscar si
+  // hay un despacho vigente.
+  if (modo === "picking" && !tipoDocumento) {
+    throw solicitudInvalida(
+      "Debe seleccionar la caja de la factura antes de continuar.",
+    );
+  }
+
   const vigente = await despachosRepo.despachoVigente(numeroFactura, modo);
 
   if (vigente) {
@@ -48,6 +62,22 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
     }
 
     asegurarAcceso(vigente, usuario);
+
+    // La caja tambien se verifica al REANUDAR. Sin esto, exigirla al crear no
+    // sirve de nada: bastaria con que la factura ya estuviera abierta para que
+    // el operario entrara con la caja equivocada y siguiera trabajando sobre un
+    // despacho que no es el suyo.
+    if (
+      tipoDocumento &&
+      vigente.tipo_documento &&
+      vigente.tipo_documento !== tipoDocumento
+    ) {
+      throw conflicto(
+        `La factura ${numeroFactura} en curso es de la caja ` +
+          `${vigente.tipo_documento}, no de ${tipoDocumento}.`,
+        { caja_correcta: vigente.tipo_documento },
+      );
+    }
 
     await eventosRepo.registrar({
       despachoId: vigente.id,
