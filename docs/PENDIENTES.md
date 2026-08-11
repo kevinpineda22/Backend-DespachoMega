@@ -212,6 +212,60 @@ se fuerza el refresco antes de dar por inexistente una factura.
 
 ---
 
+## 1-quater. [A] La consulta dejó de excluir al consumidor final (10 ago 2026)
+
+**La consulta cambió en Connekta a mitad de la tarde y multiplicó su salida por
+30.** Medido con una hora de diferencia, el mismo día, sin tocar el backend:
+
+| Momento | Filas | Documentos | Series |
+| ------- | ----- | ---------- | ------ |
+| ~17:30  | 325   | 36         | P02, P05, P08 |
+| ~18:00  | 5.697 | 1.102      | P02, P04, P05, P08, P09, PN2, PN4, PN5, PN9, **Z03** |
+
+La causa está a la vista en los datos: **1.066 de los 1.102 documentos son
+mostrador** — NIT `222222222222`, razón social `CONSUMIDOR FINAL`. La versión
+anterior los excluía con
+`AND f9820_id_cliente_pdv <> '222222222222'`; la republicada no.
+
+Los 36 documentos con cliente identificado son **exactamente los mismos** de la
+medición anterior, con las mismas tres series y la misma distribución por día
+(9, 13, 10, 4). No se perdió nada: se sumó ruido.
+
+### Consecuencia y cómo quedó
+
+Sin filtrar, el control de cobertura mostraría ~270 pendientes por día para
+siempre, y un tablero que nunca puede quedar en verde deja de mirarse a la
+semana.
+
+`cobertura.service.js → aplicaAlControl()` filtra por su cuenta:
+
+```
+cliente_nit <> '222222222222'   descarta mostrador
+clase_docto  = '1231'           descarta notas crédito (las series PN*, clase 1250)
+```
+
+**El filtro se queda acá aunque también deba arreglarse en Connekta**, por el
+mismo criterio que ya se aplicó con `f120_id_cia` en §1-bis: si la consulta
+vuelve a filtrar, esto no molesta; si deja de hacerlo —como acaba de pasar— el
+control sigue siendo correcto. Barato de mantener, caro de no tener.
+
+`sincronizar()` devuelve `descartados` en cada corrida y lo escribe al log. Si
+ese número se dispara o cae a cero de golpe, lo que cambió es la consulta, no la
+operación.
+
+### Lo que queda por verificar
+
+- **Restaurar el `WHERE` en Connekta.** Bajar 5.697 filas para tirar 5.372 es
+  desperdicio en cada apertura de factura, no solo en la sincronización.
+- **`f9820_id_cliente_pdv` vs `f9740_nit`.** El filtro original comparaba contra
+  el primero y los datos traen el segundo. Verificar cuál corresponde antes de
+  reponerlo, o el `WHERE` vuelve a no filtrar nada.
+- **Colisiones de consecutivo.** Con 10 series conviviendo el riesgo sube.
+  Medido ahora: **0 colisiones**. Vale la pena volver a medirlo si se amplía la
+  ventana.
+
+---
+
 ## 2. Primer administrador — HECHO (6 ago 2026)
 
 `juanmerkahorro@gmail.com` quedó con `rol = 'admin'` y `modo_habilitado = 'ambos'`

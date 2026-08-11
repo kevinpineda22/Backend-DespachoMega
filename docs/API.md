@@ -291,6 +291,85 @@ varias líneas.
 
 ---
 
+## Control de cobertura diaria · solo admin
+
+Responde: **"de todo lo que Siesa facturó hoy, ¿qué pasó por el módulo?"**
+
+El resto de la API solo conoce las facturas que alguien tecleó. Una factura que
+nadie abrió nunca es invisible — y es justo la que hay que encontrar antes de
+cerrar el día. Medido el 10/8/2026, antes de que esto existiera: de 36
+documentos en la ventana de Siesa, 5 tenían picking.
+
+> **Se lee de un snapshot propio, no de Siesa.** Las tablas POS conservan ~4 días
+> (§1-ter), así que consultar en vivo haría imposible revisar la semana pasada.
+> La captura la hace `scripts/sync-facturas-dia.js` desde un cron diario; el
+> endpoint de sincronización es un complemento, **no** el mecanismo.
+
+### `GET /api/panel/cobertura`
+
+Query: `desde`, `hasta`, `cobertura`, `tipo_documento`, `texto`.
+Sin rango, **hoy en horario de Bogotá** (no en UTC: después de las 19:00 serían
+días distintos).
+
+Estados de `cobertura`: `sin_tocar` · `alistando` · `alistada` · `auditando` ·
+`auditada` · `excluida`.
+
+```json
+{
+  "ok": true,
+  "rango": { "desde": "2026-08-10", "hasta": "2026-08-10" },
+  "facturas": [
+    {
+      "numero_factura": "7679",
+      "tipo_documento": "P08",
+      "cliente_nombre": "OROZCO BRAVO JUAN DIEGO",
+      "lineas": 11,
+      "valor_neto": 213150,
+      "picking_hecho": false,
+      "auditoria_hecha": false,
+      "cobertura": "sin_tocar"
+    }
+  ],
+  "resumen_por_dia": [
+    { "dia": "2026-08-10", "facturadas": 4, "con_picking": 1, "sin_tocar": 3 }
+  ],
+  "totales": { "aplican": 4, "con_picking": 1, "sin_tocar": 3, "cobertura_pct": 25 }
+}
+```
+
+`picking_hecho` es **finalizado**, no abierto: un picking en curso todavía puede
+cancelarse, y contarlo como cubierto sería mentir justo en el momento en que el
+dato importa.
+
+`cobertura_pct` es `null` —no 100— cuando no hay facturas: un día sin ventas no
+es un día perfecto, es un día sin datos.
+
+### `POST /api/panel/cobertura/sincronizar`
+
+```json
+{ "fecha": "2026-08-09" }
+```
+
+Sin `fecha`, guarda **toda la ventana** que Siesa tenga. Es idempotente (clave
+única `cia + co_docto + tipo_documento + numero_factura`), así que reintentar es
+seguro — y guardar la ventana entera hace que una corrida recupere el día que el
+cron se haya perdido.
+
+Nunca pisa `excluida` ni su motivo: son decisiones humanas y una sincronización
+no puede borrarlas.
+
+### `PATCH /api/panel/cobertura/:id/exclusion`
+
+```json
+{ "excluida": true, "motivo": "anulada en Siesa" }
+```
+
+Saca una factura del conteo. **Excluir exige motivo** (`400` sin él): sin
+explicación escrita nadie puede auditar después por qué ese día dio 100%.
+Reactivar (`excluida: false`) no lo pide.
+
+---
+
 ## Alertas de inventario
 
 ### `POST /api/alertas`

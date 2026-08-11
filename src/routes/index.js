@@ -12,6 +12,7 @@ import { validate } from "../middleware/validate.js";
 
 import * as despachos from "../controllers/despachos.controller.js";
 import * as facturas from "../controllers/facturas.controller.js";
+import * as cobertura from "../controllers/cobertura.controller.js";
 import * as alertas from "../controllers/alertas.controller.js";
 import * as operarios from "../controllers/operarios.controller.js";
 import * as analitica from "../controllers/analitica.controller.js";
@@ -23,7 +24,9 @@ import {
   actualizarOperarioBody,
   aprobarBody,
   bandejaNovedadesQuery,
+  coberturaQuery,
   crearAlertaBody,
+  excluirFacturaBody,
   finalizarDespachoBody,
   historialQuery,
   listarAlertasQuery,
@@ -33,6 +36,7 @@ import {
   paramsId,
   paramsNumeroFactura,
   rangoFechasQuery,
+  sincronizarCoberturaBody,
   tipoDocumento,
   validarItemBody,
 } from "../schemas/despachoMega.schema.js";
@@ -132,6 +136,32 @@ router.get(
   requireAdmin,
   validate({ params: paramsNumeroFactura }),
   facturas.detalle,
+);
+
+// --- Control de cobertura diaria (solo admin) ------------------------------
+//
+// "De todo lo que Siesa facturo hoy, ¿que paso por el modulo?". Se apoya en un
+// snapshot propio porque las tablas POS de Siesa conservan ~4 dias: lo que no se
+// capture ahi se pierde. Ver db/migrations/008 y docs/PENDIENTES.md §1-ter.
+router.get(
+  "/panel/cobertura",
+  requireAdmin,
+  validate({ query: coberturaQuery }),
+  cobertura.tablero,
+);
+
+router.post(
+  "/panel/cobertura/sincronizar",
+  requireAdmin,
+  validate({ body: sincronizarCoberturaBody }),
+  cobertura.sincronizar,
+);
+
+router.patch(
+  "/panel/cobertura/:id/exclusion",
+  requireAdmin,
+  validate({ params: paramsId, body: excluirFacturaBody }),
+  cobertura.excluir,
 );
 
 // --- Alertas de inventario ------------------------------------------------

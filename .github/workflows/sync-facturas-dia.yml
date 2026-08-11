@@ -1,0 +1,52 @@
+# Captura diaria de lo facturado en Siesa.
+#
+# POR QUE ESTE WORKFLOW NO ES OPCIONAL
+# Las tablas POS de Siesa conservan ~4 dias (docs/PENDIENTES.md §1-ter). Lo que
+# no se capture dentro de esa ventana se pierde y no hay forma de recuperarlo:
+# el control de cobertura de ese dia queda incompleto para siempre.
+#
+# Si este workflow deja de correr, el sintoma NO es un error — es un panel que
+# muestra dias vacios. Por eso conviene revisar la pestana Actions cuando un dia
+# aparezca sin facturas y no haya sido feriado.
+name: Sync facturas del dia (Despacho Mega)
+
+on:
+  schedule:
+    # 23:30 UTC = 18:30 en Bogota (UTC-5, sin horario de verano).
+    # Despues del cierre operativo y con margen de sobra antes de que Siesa
+    # saque el dia de las tablas POS.
+    - cron: "30 23 * * *"
+  # Manual, para recuperar un dia que fallo — mientras siga dentro de la ventana.
+  workflow_dispatch:
+    inputs:
+      fecha:
+        description: "Dia a sincronizar (YYYY-MM-DD). Vacio = toda la ventana."
+        required: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      - name: Sincronizar
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # RLS activo y sin politicas de escritura: la anon key no puede
+          # insertar. Tiene que ser la service role.
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CONNI_KEY: ${{ secrets.CONNI_KEY }}
+          CONNI_TOKEN: ${{ secrets.CONNI_TOKEN }}
+          CONNEKTA_CONSULTA_FACTURA: merkahorro_Despacho_Factura_dev
+          NODE_ENV: production
+        # Sin `--env-file`: en Actions las variables llegan por `env`, y el flag
+        # falla si el archivo no existe.
+        run: node scripts/sync-facturas-dia.js ${{ inputs.fecha }}

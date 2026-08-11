@@ -166,6 +166,48 @@ export const listarFacturasQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+// --- Control de cobertura diaria -------------------------------------------
+
+export const estadoCobertura = z.enum([
+  "sin_tocar",
+  "alistando",
+  "alistada",
+  "auditando",
+  "auditada",
+  "excluida",
+]);
+
+export const coberturaQuery = z.object({
+  // Sin rango, el servicio usa HOY en horario de Bogota. No se pone el default
+  // aca porque `new Date()` en el servidor es UTC, y despues de las 19:00 de
+  // Bogota eso ya es el dia siguiente.
+  desde: z.string().date().optional(),
+  hasta: z.string().date().optional(),
+  cobertura: estadoCobertura.optional(),
+  tipo_documento: tipoDocumento.optional(),
+  // El control cubre todo; esto solo separa la vista. `mostrador` = consumidor
+  // final (NIT centinela 222222222222), `identificado` = el resto.
+  origen: z.enum(["mostrador", "identificado"]).optional(),
+  texto: z.string().trim().max(80).optional(),
+  // Con ~270 documentos por dia, traer el rango completo a la tabla del panel
+  // es innecesario: el resumen ya da los totales y la lista se recorre por los
+  // de arriba, que van ordenados por valor.
+  limite: z.coerce.number().int().min(1).max(2000).default(300),
+});
+
+export const sincronizarCoberturaBody = z
+  .object({ fecha: z.string().date().optional() })
+  .optional()
+  .default({});
+
+export const excluirFacturaBody = z.object({
+  excluida: z.boolean(),
+  // Obligatorio al excluir, pero la regla vive en el servicio: al reactivar no
+  // hace falta motivo, y el esquema no distingue los dos casos sin volverse
+  // ilegible.
+  motivo: z.string().trim().max(300).optional(),
+});
+
 export const historialQuery = z.object({
   limite: z.coerce.number().int().min(1).max(500).default(200),
 });

@@ -38,6 +38,23 @@ Ejecutar en el SQL Editor de Supabase, **en este orden**:
 5. `db/migrations/005_despacho_mega_auditoria_origen.sql`
 6. `db/migrations/006_despacho_mega_vista_facturas.sql`
 7. `db/migrations/007_despacho_mega_novedades_analitica.sql`
+8. `db/migrations/008_despacho_mega_cobertura_dia.sql`
+
+### Captura diaria (obligatoria)
+
+El control de cobertura se apoya en un snapshot propio porque **las tablas POS
+de Siesa solo conservan ~4 días** (ver `docs/PENDIENTES.md §1-ter`). Lo que no se
+capture dentro de esa ventana se pierde y no se puede recuperar.
+
+```bash
+npm run sync:facturas             # toda la ventana
+npm run sync:facturas 2026-08-09  # un día puntual
+```
+
+En producción lo corre `.github/workflows/sync-facturas-dia.yml`, todos los días
+a las 23:30 UTC (18:30 en Bogotá). **Si ese workflow deja de correr, el síntoma
+no es un error: son días que aparecen vacíos en el panel.** Requiere los mismos
+secretos que la sincronización del catálogo, incluida la service role key.
 
 ### Primer administrador
 

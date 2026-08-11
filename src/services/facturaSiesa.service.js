@@ -136,6 +136,62 @@ export function normalizarFactura(filas) {
 }
 
 /**
+ * Resume UN documento a nivel de encabezado, para el control de cobertura.
+ *
+ * La consulta devuelve una fila POR LINEA con el encabezado repetido; acá solo
+ * interesa el documento. Se toma el encabezado de la primera fila y se suman las
+ * líneas, que es lo único que hay que agregar.
+ */
+function resumirDocumento(filas) {
+  const p = filas[0];
+
+  return {
+    cia: numero(p.Cia),
+    co_docto: texto(p.CoDoc),
+    tipo_documento: texto(p.ID_TIPO_DOCTO),
+    numero_factura: texto(p.CONSEC_DOCTO),
+    fecha_factura: texto(p.FECHA_DOCTO)?.slice(0, 10) ?? null,
+    clase_docto: texto(p.ID_CLASE_DOCTO),
+    ind_estado: texto(p.IndEstado),
+    cliente_nit: texto(p.NitTercero) ?? texto(p.IdTercero),
+    cliente_nombre: texto(p.RazonSocial),
+    bodega: texto(p.BODEGA),
+    bodega_nombre: texto(p.DescBodega),
+    lineas: filas.length,
+    unidades: filas.reduce((t, f) => t + (numero(f.CANTIDAD) ?? 0), 0),
+    // El neto del DOCUMENTO viene repetido en cada línea: se toma, no se suma.
+    // Sumarlo multiplicaría el total por la cantidad de líneas.
+    valor_neto: numero(p.VrNetoDocto),
+  };
+}
+
+/**
+ * Todos los documentos de la ventana, resumidos a encabezado.
+ *
+ * Sale gratis: la consulta no acepta parámetros, así que `obtenerFilas` ya se
+ * descarga la ventana completa para cualquier apertura de factura. Acá se
+ * reusa esa misma descarga agrupando por documento en vez de filtrar por uno.
+ *
+ * Fuerza el refresco por defecto: esto lo llama el sincronizador de cobertura,
+ * y un snapshot armado sobre un cache de 30 segundos podría dejar afuera una
+ * factura emitida hace un minuto — justo la que interesa encontrar.
+ */
+export async function documentosDeLaVentana({ forzar = true } = {}) {
+  const filas = await obtenerFilas(forzar);
+
+  const grupos = new Map();
+  for (const fila of filas) {
+    const clave = claveDocumento(fila);
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(fila);
+  }
+
+  return [...grupos.values()]
+    .map(resumirDocumento)
+    .filter((d) => d.numero_factura && d.fecha_factura);
+}
+
+/**
  * Busca una factura por su consecutivo.
  *
  * SOBRE LA AMBIGÜEDAD: si el consecutivo aparece en mas de una serie, esto NO
