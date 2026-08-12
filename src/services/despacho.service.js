@@ -85,11 +85,26 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
     });
 
     const items = await despachosRepo.itemsDe(vigente.id);
-    return { despacho: vigente, items, reanudado: true };
+
+    // AL REANUDAR TAMBIEN VIAJA EL CONTEXTO DEL PICKING.
+    // Antes no iba, y la ausencia solo hacia que el banner no apareciera. Ahora
+    // el cliente DEDUCE "auditoria sin picking" de que este campo venga vacio,
+    // asi que omitirlo le avisaria al auditor que no hay alistado cuando si lo
+    // hay. Un banner que falta molesta; uno que miente hace tomar la decision
+    // equivocada.
+    const picking = await contextoPicking(vigente);
+
+    return {
+      despacho: vigente,
+      items,
+      reanudado: true,
+      sin_picking: vigente.modo === "auditoria" && !picking,
+      picking,
+    };
   }
 
   if (modo === "auditoria") {
-    return abrirAuditoria({ numeroFactura, usuario });
+    return abrirAuditoria({ numeroFactura, usuario, tipoDocumento });
   }
 
   const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
@@ -152,38 +167,38 @@ const PICKING_AUDITABLE = ["completado", "con_novedad", "aprobado"];
  * nunca se alisto no tiene nada fisico que verificar, y mostrarla como 0/0
  * seria ruido que el auditor tiene que aprender a ignorar.
  */
-async function abrirAuditoria({ numeroFactura, usuario }) {
+async function abrirAuditoria({ numeroFactura, usuario, tipoDocumento }) {
   const picking = await despachosRepo.despachoVigente(numeroFactura, "picking");
 
-  if (!picking) {
-    throw conflicto(
-      `La factura ${numeroFactura} no tiene picking registrado. ` +
-        "Primero hay que alistarla antes de poder auditarla.",
-    );
-  }
-
-  if (picking.estado === "en_proceso") {
+  // EL UNICO BLOQUEO QUE QUEDA: un picking que se esta haciendo AHORA.
+  // No es burocracia, es que el dato se mueve debajo: el picker sigue
+  // escaneando, y una auditoria abierta contra un conteo a medias verifica
+  // contra un numero que dentro de un minuto va a ser otro.
+  if (picking?.estado === "en_proceso") {
     throw conflicto(
       `El picking de la factura ${numeroFactura} todavia esta en proceso. ` +
         "Se puede auditar cuando el operario lo finalice.",
     );
   }
 
-  if (!PICKING_AUDITABLE.includes(picking.estado)) {
-    throw conflicto(
-      `El picking de la factura ${numeroFactura} esta en estado ` +
-        `${picking.estado} y no se puede auditar.`,
-    );
-  }
-
-  const itemsPicking = await despachosRepo.itemsDe(picking.id);
+  const itemsPicking = picking ? await despachosRepo.itemsDe(picking.id) : [];
   const alistados = itemsPicking.filter((i) => Number(i.cantidad_validada) > 0);
 
-  if (alistados.length === 0) {
-    throw conflicto(
-      `El picking de la factura ${numeroFactura} cerro sin alistar ningun ` +
-        "producto. No hay nada que auditar.",
-    );
+  // SIN PICKING UTIL, SE AUDITA CONTRA LA FACTURA.
+  // Hay dias en que solo se audita y el alistado no pasa por el modulo.
+  // Antes eso era un 409 y el auditor no podia trabajar. Ahora entra igual,
+  // avisado: sin picking no hay con que comparar, asi que la referencia pasa a
+  // ser lo FACTURADO en Siesa, no lo que alguien alisto.
+  const auditableDesdePicking =
+    picking && PICKING_AUDITABLE.includes(picking.estado) && alistados.length > 0;
+
+  if (!auditableDesdePicking) {
+    return abrirAuditoriaSinPicking({
+      numeroFactura,
+      usuario,
+      tipoDocumento,
+      picking,
+    });
   }
 
   const despacho = await despachosRepo.crearConItems(
@@ -234,6 +249,7 @@ async function abrirAuditoria({ numeroFactura, usuario }) {
     despacho,
     items: await despachosRepo.itemsDe(despacho.id),
     reanudado: false,
+    sin_picking: false,
     picking: {
       id: picking.id,
       estado: picking.estado,
@@ -242,6 +258,86 @@ async function abrirAuditoria({ numeroFactura, usuario }) {
       lineas_factura: itemsPicking.length,
       lineas_alistadas: alistados.length,
     },
+  };
+}
+
+/**
+ * Auditoria de una factura que nunca paso por picking en el modulo.
+ *
+ * La referencia es lo FACTURADO, no lo alistado, porque no hay alistado con que
+ * comparar. En la practica el auditor termina haciendo el conteo completo, y
+ * por eso el aviso importa: la pantalla se ve igual que una auditoria normal,
+ * pero lo que esta verificando es otra cosa.
+ *
+ * Queda registrado en la bitacora con `sin_picking: true`. Si manana alguien
+ * pregunta por que una factura no tiene picking, la respuesta esta en el evento
+ * y no en la memoria de quien estuvo ese dia.
+ */
+async function abrirAuditoriaSinPicking({
+  numeroFactura,
+  usuario,
+  tipoDocumento,
+  picking,
+}) {
+  const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
+    tipoDocumento,
+  });
+
+  const despacho = await despachosRepo.crearConItems(
+    {
+      numero_factura: encabezado.numero_factura,
+      tipo_documento: encabezado.tipo_documento,
+      fecha_factura: encabezado.fecha_factura,
+      modo: "auditoria",
+      estado: "en_proceso",
+      operario_id: usuario.operarioId,
+      cliente_nit: encabezado.cliente_nit,
+      cliente_nombre: encabezado.cliente_nombre,
+      sede: encabezado.sede,
+      bodega: encabezado.bodega,
+      total_items: items.length,
+      items_validados: 0,
+      // Se guarda el snapshot: sin picking de origen, este es el unico registro
+      // de como venia la factura en Siesa al momento de auditarla.
+      snapshot_siesa: filasCrudas,
+      despacho_origen_id: null,
+    },
+    items,
+  );
+
+  // El motivo cambia segun lo que se encontro, y no es lo mismo "nunca se
+  // alisto" que "se alisto y quedo en cero": la segunda merece que el auditor
+  // sepa que hubo un intento previo.
+  const motivo = !picking
+    ? "no tiene picking registrado en el modulo"
+    : PICKING_AUDITABLE.includes(picking.estado)
+      ? "tiene un picking que cerro sin alistar ningun producto"
+      : `tiene un picking en estado ${picking.estado}, que no es auditable`;
+
+  await eventosRepo.registrar({
+    despachoId: despacho.id,
+    actorUserId: usuario.userId,
+    actorCorreo: usuario.correo,
+    evento: EVENTO.DESPACHO_ABIERTO,
+    payload: {
+      numero_factura: numeroFactura,
+      modo: "auditoria",
+      total_items: items.length,
+      sin_picking: true,
+      motivo,
+      picking_id: picking?.id ?? null,
+    },
+  });
+
+  return {
+    despacho,
+    items: await despachosRepo.itemsDe(despacho.id),
+    reanudado: false,
+    sin_picking: true,
+    aviso:
+      `La factura ${numeroFactura} ${motivo}. ` +
+      "Se esta auditando contra lo FACTURADO en Siesa, no contra un alistado.",
+    picking: null,
   };
 }
 

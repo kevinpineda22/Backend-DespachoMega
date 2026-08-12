@@ -64,6 +64,25 @@ export const env = {
   },
 
   /**
+   * Items que Siesa factura pero que NADIE escanea: no son producto fisico.
+   *
+   * 44736 "DESPACHO PRODUCTOS" es un concepto administrativo interno. Mientras
+   * entraba al despacho, ocupaba una linea que no se podia validar y el picking
+   * nunca llegaba al 100%: al 12/8/2026 habia 10 pickings abiertos trabados por
+   * eso, todos con cantidad_validada = 0.
+   *
+   * Va por variable de entorno y no fijo en el codigo porque el catalogo de
+   * conceptos administrativos lo maneja el area contable, no desarrollo: cuando
+   * aparezca el siguiente, se agrega al `.env` y listo.
+   */
+  itemsExcluidos: new Set(
+    texto(process.env.DESPACHO_ITEMS_EXCLUIDOS, "44736")
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean),
+  ),
+
+  /**
    * Correo. TODO opcional: si falta cualquier pieza, el envio queda apagado y
    * el modulo sigue funcionando (las alertas llegan igual por Realtime).
    *

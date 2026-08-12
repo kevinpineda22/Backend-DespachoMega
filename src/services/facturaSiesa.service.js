@@ -116,6 +116,12 @@ export function normalizarFactura(filas) {
       const codigoItem = texto(fila.id_item);
       if (!codigoItem) return null;
 
+      // SE EXCLUYE ACA, EN EL ORIGEN, Y NO AL PINTAR LA LISTA.
+      // Ocultarlo en la vista lo dejaria igual dentro del despacho: contaria en
+      // `total_items` y el picking quedaria en 9/10 para siempre, con la linea
+      // que falta invisible. Si no se escanea, no entra.
+      if (env.itemsExcluidos.has(codigoItem)) return null;
+
       return {
         // La consulta no trae numero de linea. El orden de llegada ES la
         // numeracion; `RowidMvto` (GUID del movimiento) queda como identidad
