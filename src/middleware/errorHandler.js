@@ -52,5 +52,9 @@ export function errorHandler(error, req, res, _next) {
 
   if (!esProduccion && error.detalle) cuerpo.detalle = error.detalle;
 
+  // `datos` SI viaja en produccion: es lo que el cliente necesita para ofrecerle
+  // una salida al operario, no contexto de depuracion. Ver `ErrorHttp`.
+  if (error.datos) cuerpo.datos = error.datos;
+
   res.status(status).json(cuerpo);
 }

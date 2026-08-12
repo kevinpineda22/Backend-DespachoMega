@@ -244,6 +244,9 @@ export async function consultarFactura(numeroFactura, { tipoDocumento } = {}) {
           `La factura ${objetivo} no es de la caja ${tipoDocumento}: ` +
             `esta en ${cajas.join(" o ")}. Verifique la caja o el numero.`,
           { cajas_correctas: cajas },
+          // Por `datos` y no solo por `detalle`: el front ofrece cambiar a la
+          // caja correcta de un toque, y para eso necesita la lista en produccion.
+          { cajas },
         );
       }
     }
@@ -263,10 +266,17 @@ export async function consultarFactura(numeroFactura, { tipoDocumento } = {}) {
 
   if (grupos.size > 1) {
     const tipos = [...new Set(candidatas.map((f) => texto(f.ID_TIPO_DOCTO)))];
+
+    // ESTE ES EL UNICO MOMENTO EN QUE SE LE PREGUNTA LA CAJA AL OPERARIO.
+    // El flujo normal no la pide: el numero solo identifica una factura (medido:
+    // 0 colisiones), asi que preguntar siempre seria cobrarle un paso en cada
+    // factura por un empate que casi nunca pasa. Cuando SI pasa, el 409 trae las
+    // cajas en `datos` y el front muestra el selector con esas dos y nada mas.
     throw conflicto(
-      `El consecutivo ${objetivo} existe en varias series (${tipos.join(", ")}). ` +
-        "Indique el tipo de documento para continuar.",
+      `El consecutivo ${objetivo} existe en ${tipos.length} cajas ` +
+        `(${tipos.join(", ")}). Indique de cual es la factura que tiene en la mano.`,
       { tipos_documento: tipos },
+      { cajas: tipos, requiere_caja: true },
     );
   }
 

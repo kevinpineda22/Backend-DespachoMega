@@ -88,9 +88,9 @@ Referencia rápida para no reimplementar lo que ya existe.
 | `POST /despachos/:id/aprobar` | Sí | `DMTabDespachos`, `DMFacturaDetalle` |
 | `GET /despachos/:id/eventos` | **Cliente listo, UI no lo llama** | `dmApi.eventosDespacho` |
 | `GET /panel/facturas` · `/panel/facturas/:numero` | Sí | `DMTabFacturas` |
-| **`GET /panel/cobertura`** | **NO — sin frontend** | §4 |
-| **`POST /panel/cobertura/sincronizar`** | **NO — sin frontend** | §4 |
-| **`PATCH /panel/cobertura/:id/exclusion`** | **NO — sin frontend** | §4 |
+| `GET /panel/cobertura` | Sí | `DMTabCobertura` |
+| `POST /panel/cobertura/sincronizar` | Sí | `dmApi.sincronizarCobertura` |
+| `PATCH /panel/cobertura/:id/exclusion` | Sí | `dmApi.excluirFactura` |
 | `POST /alertas` · `GET /alertas` · `PATCH /alertas/:id` | Sí | operario + `DMTabNovedades` |
 | `GET /panel/novedades` | Sí | `DMTabNovedades` |
 | `GET /operarios` · `PATCH /operarios/:id` · `/actividad` | Sí | `DMTabOperarios` |
@@ -103,38 +103,27 @@ si algún día hace falta pedir una sola tarjeta.
 
 ---
 
-## 4. [A] Control de cobertura: backend completo, frontend inexistente
+## 4. ~~Control de cobertura sin frontend~~ — RESUELTO (11 ago 2026)
 
-El pendiente más grande que sale de comparar los dos repos.
+`DMTabCobertura.jsx` (commit `fc8bed9c`) cerró el hueco. El panel pasó a **cinco
+secciones** y `dmApi` tiene los tres métodos: `coberturaDia`,
+`sincronizarCobertura` (con timeout de 90 s, que hace falta: la sincronización
+baja el día entero de Siesa) y `excluirFactura`.
 
-El backend tiene el control de cobertura **entero**: tres endpoints, dos
-migraciones (`008_despacho_mega_cobertura_dia.sql`,
-`009_despacho_mega_cobertura_mostrador.sql`), el servicio con su filtro de
-mostrador y notas crédito (`cobertura.service.js → aplicaAlControl()`), el
-script `scripts/sync-facturas-dia.js` con su `npm run sync:facturas`, y el
-workflow `.github/workflows/sync-facturas-dia.yml` que lo corre solo.
+<details><summary>Por qué era el pendiente más grande</summary>
 
-**Nada de eso se puede ver.** `DespachoMegaAdmin.jsx` tiene cuatro secciones —
-Facturas, Novedades, Operarios, Analítica — y ninguna es Cobertura. `dmApi` no
-tiene un solo método que apunte ahí.
+El backend tenía el control **entero** —tres endpoints, migraciones
+`008_despacho_mega_cobertura_dia.sql` y `009_despacho_mega_cobertura_mostrador.sql`,
+`cobertura.service.js → aplicaAlControl()`, `scripts/sync-facturas-dia.js` y su
+workflow— y no se podía ver nada.
 
-Por qué importa y no es cosmético: el snapshot diario existe **porque las tablas
-POS de Siesa conservan ~4 días** (`PENDIENTES.md` §1-ter). Se está capturando
-información que se pierde si no se captura, y nadie la mira. La pregunta que
-responde —"de todo lo que Siesa facturó hoy, ¿qué pasó por el módulo?"— es la
-única que detecta una factura que **nunca se despachó**. Las otras cuatro
-pestañas solo ven lo que sí entró.
+El snapshot diario existe **porque las tablas POS de Siesa conservan ~4 días**
+(`PENDIENTES.md` §1-ter): se capturaba información que se pierde si no se
+captura, y nadie la miraba. La pregunta que responde —"de todo lo que Siesa
+facturó hoy, ¿qué pasó por el módulo?"— es la única que detecta una factura que
+**nunca se despachó**. Las otras cuatro pestañas solo ven lo que sí entró.
 
-### Qué falta (todo del lado del frontend)
-
-- [ ] `dmApi.tableroCobertura(filtros)`, `dmApi.sincronizarCobertura(payload)`,
-      `dmApi.excluirFactura(id, payload)`.
-- [ ] Quinta entrada en `SECCIONES` de `DespachoMegaAdmin.jsx` + componente
-      `DMTabCobertura.jsx`. El menú sale de esa lista, así que agregarla ahí
-      alcanza para que aparezca en la sidebar y en el contenido.
-- [ ] Botón de sincronización manual y acción de excluir una factura del control
-      (la exclusión ya existe en el backend para las que legítimamente no pasan
-      por el módulo).
+</details>
 
 ---
 
@@ -174,7 +163,6 @@ Detalle completo en `PENDIENTES.md`. Resumen ordenado por prioridad:
 
 | Pendiente | Prioridad | Nota |
 | --------- | --------- | ---- |
-| Pestaña de cobertura | **Alta** | §4 — lo único que detecta una factura nunca despachada |
 | Historial propio del operario | Baja | Si se expone, el `operario_id` **se deriva del JWT en el servidor**, no del query (`listar()` hoy pasa los filtros tal cual) |
 | Bitácora del despacho en la UI | Baja | `dmApi.eventosDespacho` está escrito y nadie lo llama |
 | Modo offline | Baja | Patrón ya resuelto en Traslados: `useAuditoriaOffline.js`, `useRecoleccionOffline.js` |

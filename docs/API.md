@@ -74,13 +74,40 @@ Abre la factura, o **reanuda** el despacho que ya estaba en curso.
 { "numero_factura": "1520045", "modo": "picking", "tipo_documento": "P05" }
 ```
 
-`tipo_documento` es opcional: solo hace falta para desempatar si el consecutivo
-existe en varias series.
+`tipo_documento` es la **caja** (`ID_TIPO_DOCTO`: `P02`, `P08`, …) y es
+**opcional a propósito**: viene en la consulta a Siesa, así que el flujo normal
+la resuelve sola con el consecutivo. **No pedírsela al operario por adelantado** —
+medido: 0 colisiones en 468 documentos, así que sería cobrar un paso por factura
+para un empate que casi nunca ocurre.
 
 - `201` si se creó, `200` si se reanudó.
-- Responde `{ despacho, items, reanudado }`.
+- Responde `{ despacho, items, reanudado }` (con `despacho.tipo_documento`, para
+  que el operario pueda verificar la caja contra el papel).
 - `409` si la factura ya fue procesada en ese modo.
 - `403` si el despacho en curso es de otro operario.
+
+#### El único caso que pide la caja: consecutivo en varias cajas
+
+Cuando el mismo número existe en más de una caja, la respuesta es `409` y trae
+las opciones en **`datos`**, no en `detalle`:
+
+```json
+{ "ok": false,
+  "error": "El consecutivo 75784 existe en 2 cajas (P02, P08). Indique de cual es la factura que tiene en la mano.",
+  "datos": { "cajas": ["P02", "P08"], "requiere_caja": true } }
+```
+
+El cliente muestra el selector **solo con esas cajas** y repite el `POST` con
+`tipo_documento`. Mandar una caja que no corresponde también da `409`, con
+`datos.cajas` nombrando dónde sí está el número.
+
+> **`datos` vs `detalle` — la distinción importa.** `detalle` es contexto de
+> depuración y **el backend lo omite en producción** (arrastra nombres de tablas
+> de Supabase y Siesa). `datos` viaja siempre: es lo que el cliente necesita para
+> ofrecerle una salida al operario. Con las cajas en `detalle`, en producción
+> llegaba un `409` sin opciones y el selector no tenía nada que mostrar — un
+> callejón sin salida que en desarrollo no se veía. Al usar `datos`, solo lo que
+> ya se le puede decir al operario en voz alta: nunca tablas ni columnas.
 
 #### `modo: "picking"` — contra la factura
 
