@@ -208,14 +208,32 @@ export function requireAdmin(req, _res, next) {
  */
 export function requireModo(modo) {
   return (req, _res, next) => {
-    const habilitado = req.usuario?.modoHabilitado;
-
-    // El admin no queda encerrado por `modo_habilitado`: necesita poder entrar
-    // a cualquier proceso para reproducir un problema que le reporten.
-    if (req.usuario?.rol === "admin") return next();
+    // EL ROL Y EL MODO DECIDEN COSAS DISTINTAS.
+    // `rol` dice a que PANEL se entra; `modo_habilitado`, que PROCESO se ejecuta.
+    //
+    // Aca habia una excepcion para el admin, con la idea de que pudiera entrar a
+    // cualquier proceso para reproducir un problema reportado. El costo era que
+    // `modo_habilitado` no significaba nada para un admin: se le podia poner
+    // "Solo auditoria" en el panel y seguia viendo y ejecutando picking, sin
+    // ninguna señal de por que la configuracion no surtia efecto.
+    //
+    // Un admin que necesite los dos procesos se pone "ambos" — es el valor por
+    // defecto al registrarse y esta a un desplegable de distancia en el panel
+    // que ya tiene abierto. Preferimos un ajuste explicito antes que una regla
+    // invisible que contradice lo que la pantalla muestra.
+    //
+    // El fallback a "ambos" cubre el dato incompleto: una fila vieja sin el
+    // campo, o un valor que no reconocemos, no puede dejar a nadie sin trabajar.
+    const habilitado = req.usuario?.modoHabilitado || "ambos";
 
     if (habilitado !== "ambos" && habilitado !== modo) {
-      return next(prohibido(`El usuario no tiene habilitado el modo ${modo}.`));
+      return next(
+        prohibido(
+          `Su usuario tiene habilitado unicamente el proceso de ` +
+            `${habilitado === "picking" ? "picking" : "auditoria"}. ` +
+            "Pida al administrador que lo cambie desde el panel.",
+        ),
+      );
     }
     next();
   };
