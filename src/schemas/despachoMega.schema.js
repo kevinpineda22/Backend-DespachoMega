@@ -34,15 +34,16 @@ export const abrirDespachoBody = z.object({
   numero_factura: numeroFactura,
   modo,
 
-  // OBLIGATORIA al abrir un picking. El numero solo alcanza para encontrar la
-  // factura —medido: 0 consecutivos repetidos en 468 documentos— pero no para
-  // confirmar que es LA que el operario tiene en la mano. Con la caja, teclear
-  // 77031 estando en la caja P05 deja de abrir una factura ajena y valida: el
-  // backend responde en que caja esta ese numero y el operario corrige.
+  // OPCIONAL, y es una decision, no una omision.
   //
-  // Opcional en el esquema porque la AUDITORIA no la pide: esa se abre contra
-  // el picking ya finalizado, que ya tiene la caja resuelta. Exigirla ahi seria
-  // pedir dos veces el mismo dato. La obliga `abrir()` solo para picking.
+  // La caja (`ID_TIPO_DOCTO`) ya viene en la consulta a Siesa: el consecutivo
+  // alcanza para resolver el documento —medido: 0 consecutivos repetidos en 468—
+  // asi que pedirsela al operario seria cobrarle un paso por factura para un
+  // empate que casi nunca ocurre.
+  //
+  // Solo viaja cuando el operario acaba de desempatar: si el numero existe en
+  // varias cajas, `consultarFactura` lanza 409 con la lista en `datos.cajas` y el
+  // cliente repite el POST con la elegida. Ver `docs/API.md`.
   tipo_documento: tipoDocumento.optional(),
 });
 

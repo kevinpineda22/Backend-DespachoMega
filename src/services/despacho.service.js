@@ -38,20 +38,17 @@ function asegurarAcceso(despacho, usuario) {
  *           tipoDocumento?: string }} args
  */
 export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
-  // La caja se exige SOLO para picking, y solo al crear.
+  // LA CAJA NO SE EXIGE, NI EN PICKING NI EN AUDITORIA.
   //
-  // En auditoria no se pide porque esa se abre contra el picking finalizado,
-  // que ya tiene la caja resuelta: volver a preguntarla seria pedir dos veces
-  // el mismo dato y abrir la puerta a que las dos respuestas no coincidan.
+  // `tipoDocumento` es un DESEMPATE opcional, no un requisito: la caja
+  // (`ID_TIPO_DOCTO`) ya viene en la consulta a Siesa, asi que el consecutivo
+  // alcanza para resolver el documento. Exigirla obligaba al operario a tipear un
+  // dato que el sistema ya tiene, cincuenta veces por jornada y con guantes.
   //
-  // Se valida antes de tocar la base: si falta, no tiene sentido ni buscar si
-  // hay un despacho vigente.
-  if (modo === "picking" && !tipoDocumento) {
-    throw solicitudInvalida(
-      "Debe seleccionar la caja de la factura antes de continuar.",
-    );
-  }
-
+  // Cuando el mismo consecutivo SI vive en dos cajas, `consultarFactura` no elige
+  // ninguna: responde 409 con la lista en `datos.cajas` y el operario desempata.
+  // Ese es el unico momento en que la caja se pregunta — y es una excepcion
+  // medida (0 colisiones en 468 documentos), no el flujo normal.
   const vigente = await despachosRepo.despachoVigente(numeroFactura, modo);
 
   if (vigente) {
