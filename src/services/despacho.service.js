@@ -170,17 +170,17 @@ const PICKING_AUDITABLE = ["completado", "con_novedad", "aprobado"];
 async function abrirAuditoria({ numeroFactura, usuario, tipoDocumento }) {
   const picking = await despachosRepo.despachoVigente(numeroFactura, "picking");
 
-  // EL UNICO BLOQUEO QUE QUEDA: un picking que se esta haciendo AHORA.
-  // No es burocracia, es que el dato se mueve debajo: el picker sigue
-  // escaneando, y una auditoria abierta contra un conteo a medias verifica
-  // contra un numero que dentro de un minuto va a ser otro.
-  if (picking?.estado === "en_proceso") {
-    throw conflicto(
-      `El picking de la factura ${numeroFactura} todavia esta en proceso. ` +
-        "Se puede auditar cuando el operario lo finalice.",
-    );
-  }
-
+  // NO SE BLOQUEA POR UN PICKING EN PROCESO. SE AVISA.
+  //
+  // Aca habia un 409: "se puede auditar cuando el operario lo finalice". La
+  // idea era proteger a la auditoria de un conteo que se mueve debajo. En la
+  // practica atrapaba al auditor, porque un picking abierto y nunca trabajado
+  // se queda en `en_proceso` para siempre y nadie lo va a finalizar: al
+  // 12/8/2026 habia 10 asi, la mayoria en 0 lineas validadas de 6, 26 y 70.
+  //
+  // Quien decide es la persona que esta parada en la bodega y ve si alguien
+  // esta alistando esa factura. Lo que el sistema debe hacer es contarle el
+  // estado con numeros, no adivinar por el. El aviso incluye el avance exacto.
   const itemsPicking = picking ? await despachosRepo.itemsDe(picking.id) : [];
   const alistados = itemsPicking.filter((i) => Number(i.cantidad_validada) > 0);
 
@@ -198,6 +198,7 @@ async function abrirAuditoria({ numeroFactura, usuario, tipoDocumento }) {
       usuario,
       tipoDocumento,
       picking,
+      itemsPicking,
     });
   }
 
@@ -278,6 +279,7 @@ async function abrirAuditoriaSinPicking({
   usuario,
   tipoDocumento,
   picking,
+  itemsPicking = [],
 }) {
   const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
     tipoDocumento,
@@ -305,14 +307,23 @@ async function abrirAuditoriaSinPicking({
     items,
   );
 
-  // El motivo cambia segun lo que se encontro, y no es lo mismo "nunca se
-  // alisto" que "se alisto y quedo en cero": la segunda merece que el auditor
-  // sepa que hubo un intento previo.
+  // El motivo cambia segun lo que se encontro. El caso `en_proceso` lleva
+  // NUMEROS y no solo el estado: "hay un picking abierto" no le sirve al
+  // auditor para decidir, y "0 de 26 lineas" le dice de una que nadie lo
+  // trabajo. Con eso ya sabe si esta pisando el trabajo de un companero o
+  // levantando algo que quedo abandonado.
+  const avance = picking
+    ? `${itemsPicking.filter((i) => Number(i.cantidad_validada) > 0).length} de ` +
+      `${itemsPicking.length} lineas alistadas`
+    : null;
+
   const motivo = !picking
     ? "no tiene picking registrado en el modulo"
-    : PICKING_AUDITABLE.includes(picking.estado)
-      ? "tiene un picking que cerro sin alistar ningun producto"
-      : `tiene un picking en estado ${picking.estado}, que no es auditable`;
+    : picking.estado === "en_proceso"
+      ? `tiene un picking ABIERTO y sin finalizar (${avance})`
+      : PICKING_AUDITABLE.includes(picking.estado)
+        ? "tiene un picking que cerro sin alistar ningun producto"
+        : `tiene un picking en estado ${picking.estado}, que no es auditable`;
 
   await eventosRepo.registrar({
     despachoId: despacho.id,
