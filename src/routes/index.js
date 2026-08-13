@@ -36,6 +36,7 @@ import {
   numeroFactura,
   paramsId,
   paramsIdItem,
+  paramsUserId,
   paramsNumeroFactura,
   rangoFechasQuery,
   resolverCodigoQuery,
@@ -213,6 +214,19 @@ router.patch(
 // No hay POST: el alta de usuarios vive en AdminUsuarios, y quien tiene la ruta
 // asignada queda registrado solo al entrar. Ver `middleware/auth.js`.
 router.get("/operarios", requireAdmin, operarios.listar);
+
+// VA ANTES de `/operarios/:id`, por la misma razon que `/facturas/cajas`:
+// si estuviera despues, Express tomaria "por-usuario" como el valor de `:id`.
+//
+// Ruta aparte y no un `:id` polimorfico: los dos son UUID y no habria forma de
+// saber si el que llega es el de la fila del modulo o el del usuario de la
+// intranet. Un endpoint que adivina es un endpoint que un dia adivina mal.
+router.patch(
+  "/operarios/por-usuario/:userId",
+  requireAdmin,
+  validate({ params: paramsUserId, body: actualizarOperarioBody }),
+  operarios.provisionar,
+);
 
 router.patch(
   "/operarios/:id",

@@ -21,6 +21,10 @@ export const modo = z.enum(["picking", "auditoria"]);
 
 export const paramsId = z.object({ id: uuid });
 
+// Para configurar a alguien que todavia no entro al modulo: ahi no hay fila
+// propia, asi que se lo identifica por su usuario de la intranet.
+export const paramsUserId = z.object({ userId: uuid });
+
 // Ajuste de una linea concreta: hacen falta los dos identificadores.
 export const paramsIdItem = z.object({ id: uuid, itemId: uuid });
 

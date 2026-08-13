@@ -27,6 +27,17 @@ export async function porId(id) {
   return data;
 }
 
+export async function porUserId(userId) {
+  const { data, error } = await supabaseAdmin
+    .from(TABLA)
+    .select(CAMPOS)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function porCorreo(correo) {
   const { data, error } = await supabaseAdmin
     .from(TABLA)

@@ -67,3 +67,57 @@ export async function rutasDelUsuario(userId) {
     rutas: normalizar(config?.permissions),
   };
 }
+
+/**
+ * Todos los perfiles de la intranet con sus rutas efectivas resueltas.
+ *
+ * Es la consulta INVERSA de `rutasDelUsuario`: aquella pregunta "que puede
+ * hacer esta persona", esta pregunta "quienes pueden entrar". La necesita el
+ * panel de Operarios para mostrar tambien a quien todavia no ha ingresado.
+ *
+ * DOS CONSULTAS, NO UNA POR PERSONA. Resolver la precedencia usuario por
+ * usuario serian N+1 consultas contra `role_permissions`; aca se traen los
+ * roles una sola vez y se resuelve en memoria.
+ *
+ * Se aplica la MISMA precedencia que `rutasDelUsuario`: si hay
+ * `personal_routes`, reemplazan a las del rol. Divergir aca haria que el panel
+ * muestre a alguien que despues recibe un 403, o al reves.
+ *
+ * @returns {Promise<Array<{user_id, nombre, correo, role, rutas: string[]}>>}
+ */
+export async function perfilesConRutas() {
+  const [{ data: perfiles, error }, { data: roles, error: errorRoles }] =
+    await Promise.all([
+      supabaseAdmin.from("profiles").select("user_id, nombre, correo, role, personal_routes"),
+      supabaseAdmin.from("role_permissions").select("role, permissions"),
+    ]);
+
+  if (error) throw error;
+  if (errorRoles) throw errorRoles;
+
+  const normalizar = (lista) =>
+    (Array.isArray(lista) ? lista : [])
+      .map((r) => (typeof r === "string" ? r : r?.path))
+      .filter(Boolean);
+
+  const porRol = new Map((roles || []).map((r) => [r.role, normalizar(r.permissions)]));
+
+  // Mismo respaldo que el login: admin_clientes hereda de admin_proveedores.
+  const rutasDeRol = (rol) =>
+    porRol.get(rol) ??
+    (rol === "admin_clientes" ? porRol.get("admin_proveedores") : null) ??
+    [];
+
+  return (perfiles || [])
+    .filter((p) => p.user_id)
+    .map((p) => {
+      const personales = normalizar(p.personal_routes);
+      return {
+        user_id: p.user_id,
+        nombre: p.nombre,
+        correo: p.correo,
+        role: p.role,
+        rutas: personales.length > 0 ? personales : rutasDeRol(p.role),
+      };
+    });
+}
