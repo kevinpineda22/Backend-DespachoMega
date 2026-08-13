@@ -160,3 +160,94 @@ describe("compararLineas", () => {
     expect(compararLineas([], [])).toEqual([]);
   });
 });
+
+/**
+ * Auditoria abierta contra Siesa, sin copiar el picking.
+ *
+ * Existe desde que se permitio auditar sin alistado previo. Rompe el supuesto
+ * central del bloque de arriba —"la auditoria solo contiene lo alistado"— y por
+ * eso necesita sus propios casos: aplicar aca el guardia `alistado > 0`
+ * esconderia justo lo que el auditor conto.
+ */
+describe("compararLineas con auditoria independiente", () => {
+  const independiente = { auditoriaDerivada: false };
+
+  /** Linea de auditoria propia: exige lo FACTURADO, no lo alistado. */
+  const lineaAuditoria = (linea, codigo, solicitada, validada) => ({
+    id: `a${linea}`,
+    linea,
+    codigo_item: codigo,
+    descripcion: `Producto ${codigo}`,
+    unidad: "UND",
+    cantidad_solicitada: solicitada,
+    cantidad_validada: validada,
+    estado_item: validada >= solicitada ? "completo" : "parcial",
+  });
+
+  it("muestra lo auditado aunque el picking no haya alistado nada", () => {
+    // El caso real de la factura 48263: picking abandonado en 0, el auditor
+    // conto 1800. Con el guardia puesto, "auditado" salia vacio.
+    const picking = [lineaPicking(1, "40117", 1800, 0)];
+    const auditoria = [lineaAuditoria(1, "40117", 1800, 1800)];
+
+    const r = compararLineas(picking, auditoria, independiente);
+
+    expect(r).toHaveLength(1);
+    expect(r[0].alistado).toBe(0);
+    expect(r[0].auditado).toBe(1800);
+    expect(r[0].auditoria_item_id).toBe("a1");
+  });
+
+  it("sigue repartiendo en orden con productos repetidos", () => {
+    // Que el guardia no aplique NO significa emparejar de cualquier forma: el
+    // cruce por codigo y en orden tiene que seguir intacto.
+    const picking = [
+      lineaPicking(1, "A", 10, 0),
+      lineaPicking(2, "B", 3, 3),
+      lineaPicking(3, "A", 5, 0),
+    ];
+    const auditoria = [
+      lineaAuditoria(1, "A", 10, 10),
+      lineaAuditoria(2, "B", 3, 3),
+      lineaAuditoria(3, "A", 5, 4),
+    ];
+
+    const r = compararLineas(picking, auditoria, independiente);
+
+    expect(r[0].auditado).toBe(10);
+    expect(r[0].auditoria_item_id).toBe("a1");
+    expect(r[2].auditado).toBe(4);
+    expect(r[2].auditoria_item_id).toBe("a3");
+  });
+
+  it("saca a la luz una linea que auditaron y el picking no tiene", () => {
+    // Pasa con un picking viejo, creado antes de excluir el item 44736.
+    const picking = [lineaPicking(1, "A", 10, 0)];
+    const auditoria = [
+      lineaAuditoria(1, "A", 10, 10),
+      lineaAuditoria(2, "Z", 4, 4),
+    ];
+
+    const r = compararLineas(picking, auditoria, independiente);
+
+    expect(r).toHaveLength(2);
+    const suelta = r[1];
+    expect(suelta.codigo_item).toBe("Z");
+    expect(suelta.auditado).toBe(4);
+    expect(suelta.solo_auditoria).toBe(true);
+    // En null y no en cero: cero afirmaria que el picking pidio ese producto.
+    expect(suelta.facturado).toBeNull();
+    expect(suelta.alistado).toBeNull();
+    expect(suelta.picking_item_id).toBeNull();
+  });
+
+  it("arma el comparativo cuando NO hubo picking en absoluto", () => {
+    const auditoria = [lineaAuditoria(1, "A", 10, 9)];
+
+    const r = compararLineas([], auditoria, independiente);
+
+    expect(r).toHaveLength(1);
+    expect(r[0].auditado).toBe(9);
+    expect(r[0].solo_auditoria).toBe(true);
+  });
+});

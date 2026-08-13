@@ -64,9 +64,21 @@ export async function detalle(numeroFactura) {
     detalleDespacho(auditoria),
   ]);
 
-  const comparativo = detallePicking
-    ? compararLineas(detallePicking.items, detalleAuditoria?.items ?? [])
-    : [];
+  // La auditoria es DERIVADA si se creo copiando lo alistado de ESTE picking.
+  // Si se abrio por su cuenta contra Siesa, `despacho_origen_id` viene en null
+  // y las dos listas son independientes: el cruce no puede asumir que una
+  // linea sin alistar no tiene contraparte.
+  const auditoriaDerivada =
+    Boolean(auditoria?.despacho_origen_id) &&
+    auditoria.despacho_origen_id === picking?.id;
+
+  // Se arma tambien SIN picking. Antes devolvia [] y el panel mostraba la
+  // tabla vacia: una auditoria hecha sin alistado previo no tenia donde verse.
+  const comparativo = compararLineas(
+    detallePicking?.items ?? [],
+    detalleAuditoria?.items ?? [],
+    { auditoriaDerivada },
+  );
 
   // Una sola linea de tiempo con las dos etapas entrelazadas: leer dos
   // bitacoras en paralelo y ordenarlas mentalmente es justo el trabajo que el
