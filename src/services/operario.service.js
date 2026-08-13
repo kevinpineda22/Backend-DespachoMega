@@ -53,6 +53,7 @@ export async function listar({ soloActivos } = {}) {
   ]);
 
   const porUsuario = new Map(registrados.map((o) => [o.user_id, o]));
+  const rolPorRuta = new Map(perfiles.map((p) => [p.user_id, rolSegunRutas(p.rutas)]));
 
   const pendientes = perfiles
     .filter((p) => !porUsuario.has(p.user_id))
@@ -75,8 +76,27 @@ export async function listar({ soloActivos } = {}) {
       pendiente_ingreso: true,
     }));
 
-  return [...registrados.map((o) => ({ ...o, pendiente_ingreso: false })), ...pendientes].sort(
-    (a, b) => (a.nombre || "").localeCompare(b.nombre || ""),
+  // QUIEN PERDIO LA RUTA SALE DE LA LISTA, PERO SU FILA NO SE BORRA.
+  //
+  // Son dos cosas distintas y conviene no confundirlas:
+  //
+  //   * La FILA se conserva. Los despachos, escaneos y alertas apuntan a
+  //     `operario_id`; borrarla dejaria huerfano el historial de quien
+  //     despacho cada factura, que es lo que este modulo existe para guardar.
+  //     Ese historial se sigue viendo en Facturas y en Analitica.
+  //
+  //   * La LISTA la esconde. Esta pantalla responde "quien puede trabajar en
+  //     el modulo", y alguien sin la ruta no es parte de esa respuesta:
+  //     mostrarlo invita a configurarle un proceso que nunca va a ejecutar.
+  //
+  // Efecto util de conservar la fila: si le devuelven la ruta, reaparece con
+  // su `modo_habilitado` y su `activo` como estaban. No hay que reconfigurarlo.
+  const conAcceso = registrados
+    .filter((o) => rolPorRuta.get(o.user_id) != null)
+    .map((o) => ({ ...o, pendiente_ingreso: false }));
+
+  return [...conAcceso, ...pendientes].sort((a, b) =>
+    (a.nombre || "").localeCompare(b.nombre || ""),
   );
 }
 
