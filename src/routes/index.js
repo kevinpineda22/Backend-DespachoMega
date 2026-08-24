@@ -94,6 +94,15 @@ router.get(
 
 router.get("/despachos/:id", validate({ params: paramsId }), despachos.obtener);
 
+// Existencias en vivo, en la bodega del propio despacho. Cuelga del despacho y
+// no es un `/inventario` suelto a proposito: asi la bodega y los codigos salen
+// del servidor y no de lo que mande el cliente.
+router.get(
+  "/despachos/:id/inventario",
+  validate({ params: paramsId }),
+  despachos.inventario,
+);
+
 router.post(
   "/despachos/:id/validar",
   validate({ params: paramsId, body: validarItemBody }),

@@ -22,6 +22,7 @@ import {
   totalizar,
   serieDiaria,
   mapaDeCalor,
+  facturasPorDiaSemana,
 } from "./agregacion.js";
 
 const DIAS_POR_DEFECTO = 30;
@@ -56,6 +57,7 @@ export async function tablero(filtros) {
     itemsDia,
     calidadDia,
     indicadores,
+    facturasDia,
   ] = await Promise.all([
     analiticaRepo.resumenDiario(args),
     analiticaRepo.porOperario(args),
@@ -65,6 +67,7 @@ export async function tablero(filtros) {
     analiticaRepo.novedadesPorItem(args),
     analiticaRepo.calidadEscaneo(args),
     facturasRepo.indicadores(rango),
+    analiticaRepo.facturasPorDiaSemana(args),
   ]);
 
   return {
@@ -73,6 +76,8 @@ export async function tablero(filtros) {
     // Series listas para graficar, no filas crudas por dia.
     serie_diaria: serieDiaria(resumen),
     mapa_calor: mapaDeCalor(picos),
+    // Total real por dia: no se puede sacar sumando las horas del mapa.
+    facturas_por_dia_semana: facturasPorDiaSemana(facturasDia),
 
     por_operario: agruparPorOperario(operariosDia),
     productos_top: agruparProductos(productosDia, limite),

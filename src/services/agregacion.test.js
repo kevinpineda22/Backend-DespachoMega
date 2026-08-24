@@ -14,6 +14,7 @@ import {
   totalizar,
   serieDiaria,
   mapaDeCalor,
+  facturasPorDiaSemana,
 } from "./agregacion.js";
 
 describe("agruparPorOperario", () => {
@@ -203,5 +204,55 @@ describe("mapaDeCalor", () => {
     const martes10 = m.find((c) => c.dia_semana === 2 && c.hora === 10);
     expect(martes10.escaneos).toBe(80);
     expect(martes10.escaneos_ok).toBe(78);
+  });
+});
+
+/**
+ * El total por dia de semana NO sale de sumar las horas del mapa de calor.
+ *
+ * Es la trampa que justifica que existan dos vistas en la migracion 011: un
+ * COUNT(DISTINCT) por hora no es aditivo. Si alguien 'simplifica' esto sumando
+ * la fila del mapa, estos casos lo agarran.
+ */
+describe("facturasPorDiaSemana", () => {
+  it("devuelve los siete dias aunque falten en el dato", () => {
+    const r = facturasPorDiaSemana([{ dia: "2026-08-11", dia_semana: 2, facturas: 12 }]);
+
+    expect(r).toHaveLength(7);
+    expect(r.map((d) => d.dia_semana)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // Un dia sin trabajo es justamente el que hay que poder ver.
+    expect(r[0].facturas).toBe(0);
+    expect(r[2].facturas).toBe(12);
+  });
+
+  it("acumula las fechas distintas que caen en el mismo dia de semana", () => {
+    const r = facturasPorDiaSemana([
+      { dia: "2026-08-04", dia_semana: 2, facturas: 10, facturas_picking: 8, facturas_auditoria: 5 },
+      { dia: "2026-08-11", dia_semana: 2, facturas: 15, facturas_picking: 12, facturas_auditoria: 9 },
+    ]);
+
+    expect(r[2].facturas).toBe(25);
+    expect(r[2].facturas_picking).toBe(20);
+    expect(r[2].facturas_auditoria).toBe(14);
+    // Sin esto no se sabe si 25 son de un martes o el acumulado de dos.
+    expect(r[2].dias_con_datos).toBe(2);
+  });
+
+  it("NO coincide con sumar las horas del mapa: por eso son dos vistas", () => {
+    // Misma factura tocada a las 9 y a las 11 de un martes: el mapa la cuenta
+    // en las dos celdas, el total del dia la cuenta una vez.
+    const mapa = mapaDeCalor([
+      { dia: "2026-08-11", dia_semana: 2, hora: 9,  facturas: 1, escaneos: 3, escaneos_ok: 3 },
+      { dia: "2026-08-11", dia_semana: 2, hora: 11, facturas: 1, escaneos: 2, escaneos_ok: 2 },
+    ]);
+    const sumandoHoras = mapa.reduce((t, c) => t + c.facturas, 0);
+
+    const total = facturasPorDiaSemana([
+      { dia: "2026-08-11", dia_semana: 2, facturas: 1 },
+    ]);
+
+    expect(sumandoHoras).toBe(2);
+    expect(total[2].facturas).toBe(1);
+    expect(sumandoHoras).not.toBe(total[2].facturas);
   });
 });

@@ -94,6 +94,12 @@ export const cancelar = asyncHandler(async (req, res) => {
 });
 
 /** Bitacora del despacho: linea de tiempo de quien hizo que. */
+/** Existencias en vivo de los items del despacho, en su propia bodega. */
+export const inventario = asyncHandler(async (req, res) => {
+  const data = await despachoService.inventarioDe(req.params.id, req.usuario);
+  res.json({ ok: true, data });
+});
+
 export const eventos = asyncHandler(async (req, res) => {
   const data = await despachoService.historial(req.params.id, req.usuario);
   res.json({ ok: true, data });

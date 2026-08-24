@@ -86,6 +86,26 @@ export async function picosTrabajo({ desde, hasta }) {
   return ejecutar(consulta);
 }
 
+/**
+ * Facturas distintas abiertas por dia.
+ *
+ * Vista aparte de `picosTrabajo` a proposito: un COUNT(DISTINCT) por hora no se
+ * puede sumar para obtener el del dia. Ver el comentario de la migracion 011.
+ */
+export async function facturasPorDiaSemana({ desde, hasta }) {
+  const consulta = rango(
+    supabaseAdmin
+      .from("despacho_mega_vw_facturas_por_dia_semana")
+      .select("*")
+      .order("dia", { ascending: false }),
+    "dia",
+    desde,
+    hasta,
+  );
+
+  return ejecutar(consulta);
+}
+
 export async function novedadesInventario({ desde, hasta, limite }) {
   let consulta = supabaseAdmin
     .from("despacho_mega_vw_novedades_inventario")

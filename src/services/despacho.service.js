@@ -10,6 +10,7 @@ import * as eventosRepo from "../repositories/eventos.repository.js";
 import { EVENTO } from "../repositories/eventos.repository.js";
 import { resolverCodigo } from "../repositories/catalogo.repository.js";
 import { consultarFactura } from "./facturaSiesa.service.js";
+import { existenciasDeItems } from "./inventarioSiesa.service.js";
 import { conflicto, noEncontrado, prohibido, solicitudInvalida } from "../lib/errores.js";
 
 const ESTADOS_CERRADOS = ["completado", "aprobado", "rechazado"];
@@ -355,6 +356,32 @@ async function abrirAuditoriaSinPicking({
 // ---------------------------------------------------------------------------
 // Consultar
 // ---------------------------------------------------------------------------
+
+/**
+ * Existencias en vivo de los items de un despacho, en SU bodega.
+ *
+ * LA BODEGA NO VIAJA DESDE EL CLIENTE, y tampoco los codigos: los dos salen del
+ * despacho. Si el cliente pudiera mandarlos, este endpoint seria un consultor
+ * de inventario de toda la compañia con la sesion de cualquier operario, y no
+ * es lo que hace falta: hace falta saber si lo de ESTA factura esta en bodega.
+ *
+ * Falla suave a proposito. Si Siesa no responde, devuelve `{}` y el panel
+ * muestra las tarjetas sin existencias en vez de romperse: el picking se puede
+ * hacer sin este dato, que es una ayuda y no un requisito.
+ */
+export async function inventarioDe(id, usuario) {
+  const despacho = await despachosRepo.porId(id);
+  if (!despacho) throw noEncontrado("Despacho no encontrado.");
+  asegurarAcceso(despacho, usuario);
+
+  if (!despacho.bodega) return {};
+
+  const items = await despachosRepo.itemsDe(id);
+  return existenciasDeItems({
+    items: items.map((i) => i.codigo_item),
+    bodega: despacho.bodega,
+  });
+}
 
 export async function obtener(id, usuario) {
   const despacho = await despachosRepo.porId(id);

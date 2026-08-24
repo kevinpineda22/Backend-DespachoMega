@@ -256,14 +256,54 @@ export function mapaDeCalor(picos = []) {
     const celda = celdas.get(clave) || {
       dia_semana: Number(p.dia_semana),
       hora: Number(p.hora),
+      facturas: 0,
       escaneos: 0,
       escaneos_ok: 0,
     };
 
+    // Sumar entre FECHAS distintas es correcto: dos martes traen facturas
+    // distintas. Lo que no se puede es sumar las HORAS de un mismo dia, y eso
+    // no pasa aca porque la clave incluye la hora.
+    celda.facturas += num(p.facturas);
     celda.escaneos += num(p.escaneos);
     celda.escaneos_ok += num(p.escaneos_ok);
     celdas.set(clave, celda);
   }
 
   return [...celdas.values()];
+}
+
+/**
+ * Facturas que entran por dia de la semana, en todo el rango.
+ *
+ * NO SE DERIVA DEL MAPA DE CALOR, y esa es toda la razon por la que existe.
+ * Las celdas del mapa son DISTINCT por hora: una factura tocada a las 9 y a las
+ * 11 esta en las dos, asi que sumar la fila la contaria dos veces. El total sale
+ * de su propia vista, que hace el DISTINCT sobre el dia entero.
+ *
+ * Devuelve SIEMPRE los siete dias, con cero donde no hubo movimiento: un lunes
+ * ausente del arreglo obligaria a la vista a distinguir "no hubo" de "no vino",
+ * y un dia sin trabajo es justamente el que hay que ver.
+ */
+export function facturasPorDiaSemana(filas = []) {
+  const total = Array.from({ length: 7 }, (_, dia_semana) => ({
+    dia_semana,
+    facturas: 0,
+    facturas_picking: 0,
+    facturas_auditoria: 0,
+    dias_con_datos: 0,
+  }));
+
+  for (const f of filas) {
+    const d = total[Number(f.dia_semana)];
+    if (!d) continue;
+    d.facturas += num(f.facturas);
+    d.facturas_picking += num(f.facturas_picking);
+    d.facturas_auditoria += num(f.facturas_auditoria);
+    // Cuantas fechas concretas aportaron. Sin esto no se puede decir si 40
+    // facturas un martes son de un martes o el acumulado de cuatro.
+    d.dias_con_datos += 1;
+  }
+
+  return total;
 }
