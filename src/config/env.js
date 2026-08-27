@@ -75,6 +75,28 @@ export const env = {
    * conceptos administrativos lo maneja el area contable, no desarrollo: cuando
    * aparezca el siguiente, se agrega al `.env` y listo.
    */
+  /**
+   * Disparo manual del workflow que sincroniza items y codigos de barras.
+   *
+   * TODO OPCIONAL: si falta el token, el boton del panel queda deshabilitado y
+   * el modulo sigue funcionando. El cron diario no depende de esto.
+   *
+   * SOBRE EL TOKEN — leer antes de crearlo.
+   * Tiene que ser un PAT DE GRANULARIDAD FINA (fine-grained), limitado a UN
+   * repositorio y con UN permiso: "Actions: read and write". Nada mas.
+   *
+   * Un token clasico con scope `workflow` puede disparar CUALQUIER workflow de
+   * CUALQUIER repo al que la cuenta tenga acceso, y varios de esos despliegan.
+   * Este boton solo necesita empujar una sincronizacion de catalogo; darle mas
+   * alcance que eso es regalar superficie a cambio de nada.
+   */
+  github: {
+    token: texto(process.env.GITHUB_TOKEN),
+    repo: texto(process.env.GITHUB_REPO, "desarrolladorMK/Pagina-web_React"),
+    workflow: texto(process.env.GITHUB_WORKFLOW, "siesa-sync-mega.yml"),
+    ref: texto(process.env.GITHUB_REF_SYNC, "master"),
+  },
+
   itemsExcluidos: new Set(
     texto(process.env.DESPACHO_ITEMS_EXCLUIDOS, "44736")
       .split(",")

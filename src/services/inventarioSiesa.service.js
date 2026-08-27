@@ -36,6 +36,21 @@ const TTL_MS = 60_000;
 // reintento con espera termina tardando mas que haber ido mas despacio.
 const CONCURRENCIA = 8;
 
+// PRESUPUESTO TOTAL, MEDIDO CONTRA EL LIMITE DE VERCEL.
+//
+// En Vercel una funcion serverless se corta a los 10 s por defecto (no hay
+// `maxDuration` en vercel.json). El timeout por item estaba en 20 s: si Siesa
+// se colgaba con UN item, Vercel mataba la funcion antes y el operario recibia
+// un error de gateway en vez de las tarjetas sin inventario. La degradacion
+// elegante no servia de nada porque nunca llegaba a ejecutarse.
+//
+// Ahora: 6 s por item y 7 s de presupuesto total. Lo que no alcanzo a llegar
+// vuelve como `null` y la tarjeta dice "sin consultar". Es mejor devolver la
+// mitad del inventario a tiempo que el inventario completo despues de que la
+// plataforma corto la respuesta.
+const TIMEOUT_ITEM_MS = 6_000;
+const PRESUPUESTO_MS = 7_000;
+
 const cache = new Map();
 
 /**
@@ -68,7 +83,7 @@ async function consultarItem(codigo) {
           conniToken: env.siesa.conniToken,
           "Content-Type": "application/json",
         },
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(TIMEOUT_ITEM_MS),
       });
 
       // 400 con "No se encontraron registros" NO es un fallo: es un item sin
@@ -137,26 +152,42 @@ export async function existenciasDeItems({ items, bodega }) {
 
   const salida = {};
   let cursor = 0;
+  let sinTiempo = 0;
+  const inicio = Date.now();
+  const vencido = () => Date.now() - inicio > PRESUPUESTO_MS;
 
   const trabajador = async () => {
     while (cursor < codigos.length) {
       const codigo = codigos[cursor++];
+
+      // Se corta ANTES de pedir, no despues: arrancar una consulta que no va a
+      // alcanzar a volver solo gasta el presupuesto de las que si podrian.
+      if (vencido()) {
+        salida[codigo] = null;
+        sinTiempo++;
+        continue;
+      }
+
       try {
         salida[codigo] = await existenciasDeItem(codigo, destino);
       } catch (error) {
         logger.warn("No se pudo consultar existencias", { codigo, bodega: destino, error: error.message });
-        salida[codigo] = { existencia: 0, pos: 0, disponible: 0, error: true };
+        // `null` y no cero: un cero inventado manda al operario a reportar una
+        // novedad de algo que probablemente si esta en bodega.
+        salida[codigo] = null;
       }
     }
   };
 
-  const inicio = Date.now();
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCIA, codigos.length) }, trabajador),
   );
 
+  const resueltos = Object.values(salida).filter(Boolean).length;
   logger.info("Existencias consultadas", {
     items: codigos.length,
+    resueltos,
+    sin_tiempo: sinTiempo,
     bodega: destino,
     ms: Date.now() - inicio,
   });

@@ -15,6 +15,7 @@ import * as facturas from "../controllers/facturas.controller.js";
 import * as cobertura from "../controllers/cobertura.controller.js";
 import * as alertas from "../controllers/alertas.controller.js";
 import * as operarios from "../controllers/operarios.controller.js";
+import * as catalogo from "../controllers/catalogo.controller.js";
 import * as analitica from "../controllers/analitica.controller.js";
 
 import { z } from "zod";
@@ -222,6 +223,14 @@ router.patch(
 //
 // No hay POST: el alta de usuarios vive en AdminUsuarios, y quien tiene la ruta
 // asignada queda registrado solo al entrar. Ver `middleware/auth.js`.
+// --- Catalogo (solo admin) -------------------------------------------------
+//
+// Solo admin, y no por costumbre: dispara un workflow de GitHub que tarda ~9
+// minutos y baja ~33.000 registros de Siesa. No es una accion que deba poder
+// repetir cualquiera desde una terminal de mano.
+router.get("/catalogo/sincronizacion", requireAdmin, catalogo.estado);
+router.post("/catalogo/sincronizar", requireAdmin, catalogo.sincronizar);
+
 router.get("/operarios", requireAdmin, operarios.listar);
 
 // VA ANTES de `/operarios/:id`, por la misma razon que `/facturas/cajas`:
