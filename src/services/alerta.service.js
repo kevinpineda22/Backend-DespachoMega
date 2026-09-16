@@ -76,7 +76,6 @@ export async function crear(datos, usuario) {
   // un `await` aca. Ver docs/PENDIENTES.md.
   notificarAlertaInventario({
     numeroFactura: despacho.numero_factura,
-    modo: despacho.modo,
     codigoItem: datos.codigo_item,
     descripcion,
     cantidadFaltante: datos.cantidad_faltante,

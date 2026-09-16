@@ -268,8 +268,9 @@ operación.
 
 ## 2. Primer administrador — HECHO (6 ago 2026)
 
-`juanmerkahorro@gmail.com` quedó con `rol = 'admin'` y `modo_habilitado = 'ambos'`
-en `despacho_mega_operarios`. Los siguientes ya se crean desde la pestaña
+`juanmerkahorro@gmail.com` quedó con `rol = 'admin'` en
+`despacho_mega_operarios` (`modo_habilitado` es siempre `'auditoria'` desde la
+migración 012, ver §13). Los siguientes ya se crean desde la pestaña
 **Operarios** del panel.
 
 > **Trampa del `INSERT ... SELECT` del README:** si el correo no existe en
@@ -341,19 +342,20 @@ es una cola o un trigger de base de datos, **no** poner un `await` acá.
 
 ---
 
-## 7. [B-] Tests — arrancado (10 ago 2026)
+## 7. [B-] Tests — arrancado (10 ago 2026), ampliado (15 sep 2026)
 
-Primera prueba real: `src/services/comparativo.test.js`, 7 casos sobre el cruce
-picking ↔ auditoría. Se eligió ese porque es donde un cambio en `abrirAuditoria`
-rompe el comparativo **en silencio**: las cantidades seguirían apareciendo, pero
-contra el producto equivocado.
+Hoy hay 8 archivos y 77 casos (`npm test`): `agregacion` (lógica pura),
+`despachoMega.schema` (Zod puro) y seis suites de servicios con los
+repositorios mockeados (`despacho`, `despachador`, `factura`, `cobertura`,
+`alerta`, `operario`). `comparativo.test.js` se fue con `comparativo.js` en el
+cambio auditor-only (§13): ya no existe cruce picking ↔ auditoría que probar.
 
-> **Lección al escribirla:** `compararLineas` vivía dentro de
-> `factura.service.js` y era **imposible de probar** — importarla arrastraba los
-> repositorios y con ellos `config/supabase.js`, que lanza si faltan las
-> credenciales. Se movió a `src/services/comparativo.js`, un módulo sin ninguna
-> dependencia. Una función pura no debería necesitar una service_role key para
-> probarse, y ese es el criterio para los que faltan.
+> **Lección que sigue vigente:** un módulo que importe repositorios arrastra
+> `config/supabase.js` y `config/env.js`, que lanzan si faltan credenciales.
+> Para probar un servicio hay que `vi.mock` **todo** lo que transitivamente
+> toque `config/` (repositorios, `facturaSiesa.service`, `logger`). Las
+> funciones puras (`agregacion.js`) se prueban sin nada de eso, y ese es el
+> criterio para separar lógica de I/O.
 
 Los que siguen, misma razón (lógica pura sin I/O):
 
@@ -443,3 +445,49 @@ ecommerce que ya está en producción). Usa `getUserMedia` (no hace red) y el
 worker/wasm del decodificador, que la CSP actual ya permite porque el ecommerce
 lo embarca. **No hay que tocar la CSP.** Solo requiere **HTTPS** (la cámara no
 arranca en `http://` que no sea localhost), que en producción ya se cumple.
+
+---
+
+## 13. Cambio auditor-only — HECHO en código (15 sep 2026), migración pendiente de correr
+
+Plan completo en `docs/PLAN-AUDITOR-ONLY-WORKFLOW.md`; artefactos SDD en
+`openspec/changes/auditor-only-workflow/`. Resumen de lo que cambió:
+
+- **Picking eliminado por completo**, en escritura y lectura: rama picking de
+  `abrir()`, `comparativo.js`, `requireModo`, columna `despacho_origen_id`,
+  columnas `picking_*`, estados `alistando`/`alistada`, valor `ambos` de
+  `modo_habilitado`, conteos `con_picking`, filtro `modo` en analítica y
+  novedades. `modo` **sale del contrato de API** (Zod lo descarta); la columna
+  `despachos.modo` queda con enum de un solo valor y `DEFAULT 'auditoria'`.
+- **Despachadores como catálogo**: `despacho_mega_despachadores`, CRUD admin en
+  `/despachadores`, `despachador_id` obligatorio al crear una auditoría.
+- **Pasar sin escanear**: `POST /despachos/:id/pasar`, resultado
+  `pasado_sin_escanear`, método `pase`, columna `escaneos.motivo`. No cuenta
+  como rechazo ni como intento; las vistas lo reportan aparte en
+  `pasados_sin_escanear`.
+- **Cobertura = auditadas** (`cubiertas` = auditoría finalizada).
+
+### La migración `012` es DESTRUCTIVA — leer antes de correr
+
+`db/migrations/012_auditor_only_reset.sql` **trunca** `despachos`,
+`despacho_items`, `escaneos`, `alertas_inventario`, `aprobaciones` y `eventos`,
+y **recrea** los enums desde cero. Es válido **solo porque todos los datos
+actuales son de prueba**. No hay rollback por SQL: backup o branch de Supabase
+antes de ejecutarla.
+
+- [ ] Correrla en el SQL Editor; re-correrla para confirmar idempotencia.
+- [ ] Ejecutar las consultas de verificación que van comentadas al final del
+      archivo (enums, columnas de las vistas, `despachador_id NOT NULL`).
+- [ ] Desplegar backend y frontend **juntos** (`ESTADO-REPOS.md` §0).
+
+> **Este patrón no se repite.** En producción con histórico real la regla
+> vuelve a ser "solo `ADD VALUE`, nunca `DROP TYPE`", y `CREATE OR REPLACE VIEW`
+> solo agrega columnas al final: cualquier migración `013+` que toque estas
+> vistas vuelve a necesitar `DROP` + `CREATE` en el orden
+> `cobertura_resumen → cobertura_dia → vw_facturas`.
+
+### Nota sobre `req.usuario`
+
+`/yo` ya no devuelve `modoHabilitado`: no había ningún consumidor (su único
+lector era `requireModo`, eliminado). `GET /operarios` sigue devolviendo
+`modo_habilitado` porque la columna existe; siempre vale `'auditoria'`.

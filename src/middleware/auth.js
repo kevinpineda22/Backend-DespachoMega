@@ -22,8 +22,7 @@
  *     ninguna de las dos       -> 403
  *
  * La fila existe porque los despachos, escaneos y alertas la referencian, y
- * porque guarda lo unico que este modulo si administra: `modo_habilitado`
- * (picking / auditoria / ambos) y `activo`.
+ * porque guarda lo unico que este modulo si administra: `activo` y `sede`.
  */
 import { supabaseAdmin, verificarToken } from "../config/supabase.js";
 import { rutasDelUsuario } from "../repositories/perfiles.repository.js";
@@ -98,10 +97,9 @@ async function sincronizarOperario({ user, perfil, rolDerivado, existente }) {
         correo,
         nombre: perfil.nombre || correo,
         rol: rolDerivado,
-        // Alta permisiva a proposito: quien ya tiene la ruta puede trabajar
-        // desde el primer minuto. Restringir a un solo proceso es una decision
-        // fina que se toma despues, desde el panel, no una barrera de entrada.
-        modo_habilitado: "ambos",
+        // `modo_habilitado` no se envia: la columna tiene DEFAULT 'auditoria'
+        // y es el unico valor del enum. Quien ya tiene la ruta puede trabajar
+        // desde el primer minuto.
         activo: true,
       })
       .select("id, user_id, correo, nombre, rol, modo_habilitado, sede, activo")
@@ -184,7 +182,6 @@ export async function requireAuth(req, _res, next) {
       operarioId: operario.id,
       nombre: operario.nombre,
       rol: operario.rol,
-      modoHabilitado: operario.modo_habilitado,
       sede: operario.sede,
     };
 
@@ -200,41 +197,4 @@ export function requireAdmin(req, _res, next) {
     return next(prohibido("Esta accion es exclusiva del administrador."));
   }
   next();
-}
-
-/**
- * Exige que el operario tenga habilitado el proceso que intenta ejecutar.
- * @param {'picking'|'auditoria'} modo
- */
-export function requireModo(modo) {
-  return (req, _res, next) => {
-    // EL ROL Y EL MODO DECIDEN COSAS DISTINTAS.
-    // `rol` dice a que PANEL se entra; `modo_habilitado`, que PROCESO se ejecuta.
-    //
-    // Aca habia una excepcion para el admin, con la idea de que pudiera entrar a
-    // cualquier proceso para reproducir un problema reportado. El costo era que
-    // `modo_habilitado` no significaba nada para un admin: se le podia poner
-    // "Solo auditoria" en el panel y seguia viendo y ejecutando picking, sin
-    // ninguna señal de por que la configuracion no surtia efecto.
-    //
-    // Un admin que necesite los dos procesos se pone "ambos" — es el valor por
-    // defecto al registrarse y esta a un desplegable de distancia en el panel
-    // que ya tiene abierto. Preferimos un ajuste explicito antes que una regla
-    // invisible que contradice lo que la pantalla muestra.
-    //
-    // El fallback a "ambos" cubre el dato incompleto: una fila vieja sin el
-    // campo, o un valor que no reconocemos, no puede dejar a nadie sin trabajar.
-    const habilitado = req.usuario?.modoHabilitado || "ambos";
-
-    if (habilitado !== "ambos" && habilitado !== modo) {
-      return next(
-        prohibido(
-          `Su usuario tiene habilitado unicamente el proceso de ` +
-            `${habilitado === "picking" ? "picking" : "auditoria"}. ` +
-            "Pida al administrador que lo cambie desde el panel.",
-        ),
-      );
-    }
-    next();
-  };
 }

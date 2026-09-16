@@ -67,8 +67,8 @@ export const env = {
    * Items que Siesa factura pero que NADIE escanea: no son producto fisico.
    *
    * 44736 "DESPACHO PRODUCTOS" es un concepto administrativo interno. Mientras
-   * entraba al despacho, ocupaba una linea que no se podia validar y el picking
-   * nunca llegaba al 100%: al 12/8/2026 habia 10 pickings abiertos trabados por
+   * entraba al despacho, ocupaba una linea que no se podia validar y el despacho
+   * nunca llegaba al 100%: al 12/8/2026 habia 10 despachos abiertos trabados por
    * eso, todos con cantidad_validada = 0.
    *
    * Va por variable de entorno y no fijo en el codigo porque el catalogo de

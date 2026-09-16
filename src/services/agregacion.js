@@ -40,17 +40,16 @@ const CAMPOS_OPERARIO = [
 ];
 
 /**
- * Una fila por operario y modo, no por operario, modo y dia.
+ * Una fila por operario, no por operario y dia.
  *
- * Se conserva la apertura por modo porque picking y auditoria son trabajos
- * distintos: colapsarlos escondería que alguien audita mucho y alista poco.
+ * La clave es solo `operario_id`: el modulo es unicamente auditoria y la vista
+ * ya no trae `modo`. Si una fila vieja lo trajera, se ignora.
  */
 export function agruparPorOperario(filas = []) {
   const mapa = new Map();
 
   for (const f of filas) {
-    const clave = `${f.operario_id}|${f.modo}`;
-    let acumulado = mapa.get(clave);
+    let acumulado = mapa.get(f.operario_id);
 
     if (!acumulado) {
       acumulado = {
@@ -58,10 +57,9 @@ export function agruparPorOperario(filas = []) {
         nombre: f.nombre,
         correo: f.correo,
         sede: f.sede,
-        modo: f.modo,
         ...Object.fromEntries(CAMPOS_OPERARIO.map((c) => [c, 0])),
       };
-      mapa.set(clave, acumulado);
+      mapa.set(f.operario_id, acumulado);
     }
 
     acumular(acumulado, f, CAMPOS_OPERARIO);
@@ -127,7 +125,6 @@ const CAMPOS_ITEM = [
   "ubicacion_errada",
   "diferencia_cantidad",
   "otro",
-  "detectadas_en_auditoria",
   "unidades_faltantes",
 ];
 
@@ -165,6 +162,7 @@ const CAMPOS_CALIDAD = [
   "excede_cantidad",
   "item_completo",
   "manuales",
+  "pasados_sin_escanear",
 ];
 
 /**
@@ -172,6 +170,9 @@ const CAMPOS_CALIDAD = [
  *
  * La tasa sale de los totales del rango, no del promedio de las tasas diarias:
  * un dia con 3 escaneos no puede pesar lo mismo que uno con 300.
+ *
+ * `pasados_sin_escanear` se suma aparte: la vista ya lo excluye de `escaneos`
+ * y de `rechazados`, asi que la tasa mide solo intentos reales de lectura.
  */
 export function agruparCalidad(filas = []) {
   const mapa = new Map();
@@ -204,9 +205,9 @@ export function agruparCalidad(filas = []) {
  * Totales de cabecera.
  *
  * OJO CON LO QUE NO ESTA ACA: `facturas`. El resumen diario trae
- * `total_facturas` como COUNT(DISTINCT numero_factura) POR grupo dia+modo+estado,
- * y sumarlo contaba la misma factura una vez por picking, otra por auditoria y
- * otra vez si cambiaba de estado. El total real sale de
+ * `total_facturas` como COUNT(DISTINCT numero_factura) POR grupo dia+estado, y
+ * sumarlo contaba la misma factura otra vez si cambiaba de estado. El total
+ * real sale de
  * `despacho_mega_vw_facturas`, que ya tiene una fila por factura.
  *
  * `operarios_activos` tampoco: es otro COUNT(DISTINCT) por dia.
@@ -222,18 +223,18 @@ export function totalizar(resumen = []) {
   );
 }
 
-/** Serie diaria para la grafica de volumen, con picking y auditoria separados. */
+/** Serie diaria para la grafica de volumen: despachos e items validados por dia. */
 export function serieDiaria(resumen = []) {
   const mapa = new Map();
 
   for (const f of resumen) {
     let dia = mapa.get(f.dia);
     if (!dia) {
-      dia = { dia: f.dia, picking: 0, auditoria: 0, items_validados: 0 };
+      dia = { dia: f.dia, despachos: 0, items_validados: 0 };
       mapa.set(f.dia, dia);
     }
 
-    dia[f.modo] += num(f.total_despachos);
+    dia.despachos += num(f.total_despachos);
     dia.items_validados += num(f.items_validados);
   }
 
@@ -259,6 +260,7 @@ export function mapaDeCalor(picos = []) {
       facturas: 0,
       escaneos: 0,
       escaneos_ok: 0,
+      pasados_sin_escanear: 0,
     };
 
     // Sumar entre FECHAS distintas es correcto: dos martes traen facturas
@@ -267,6 +269,8 @@ export function mapaDeCalor(picos = []) {
     celda.facturas += num(p.facturas);
     celda.escaneos += num(p.escaneos);
     celda.escaneos_ok += num(p.escaneos_ok);
+    // El pase va aparte: es trabajo, pero no es una lectura del lector.
+    celda.pasados_sin_escanear += num(p.pasados_sin_escanear);
     celdas.set(clave, celda);
   }
 
@@ -289,8 +293,6 @@ export function facturasPorDiaSemana(filas = []) {
   const total = Array.from({ length: 7 }, (_, dia_semana) => ({
     dia_semana,
     facturas: 0,
-    facturas_picking: 0,
-    facturas_auditoria: 0,
     dias_con_datos: 0,
   }));
 
@@ -298,8 +300,6 @@ export function facturasPorDiaSemana(filas = []) {
     const d = total[Number(f.dia_semana)];
     if (!d) continue;
     d.facturas += num(f.facturas);
-    d.facturas_picking += num(f.facturas_picking);
-    d.facturas_auditoria += num(f.facturas_auditoria);
     // Cuantas fechas concretas aportaron. Sin esto no se puede decir si 40
     // facturas un martes son de un martes o el acumulado de cuatro.
     d.dias_con_datos += 1;

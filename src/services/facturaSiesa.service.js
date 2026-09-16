@@ -118,7 +118,7 @@ export function normalizarFactura(filas) {
 
       // SE EXCLUYE ACA, EN EL ORIGEN, Y NO AL PINTAR LA LISTA.
       // Ocultarlo en la vista lo dejaria igual dentro del despacho: contaria en
-      // `total_items` y el picking quedaria en 9/10 para siempre, con la linea
+      // `total_items` y la auditoria quedaria en 9/10 para siempre, con la linea
       // que falta invisible. Si no se escanea, no entra.
       if (env.itemsExcluidos.has(codigoItem)) return null;
 

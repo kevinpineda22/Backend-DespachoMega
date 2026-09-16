@@ -133,16 +133,15 @@ const CAMPOS_RESUMEN = [
   "excluidas",
   "aplican",
   "sin_tocar",
-  "alistando",
-  "con_picking",
-  "con_auditoria",
+  "auditando",
+  "cubiertas",
   "valor_sin_tocar",
   "mostrador",
   "con_cliente",
   "mostrador_aplican",
-  "mostrador_con_picking",
+  "mostrador_cubiertas",
   "con_cliente_aplican",
-  "con_cliente_con_picking",
+  "con_cliente_cubiertas",
   "notas_credito",
 ];
 
@@ -159,14 +158,16 @@ function totalizar(resumen) {
   // salio bien cuando no salio nada.
   const pct = (hechas, total) => (total ? (hechas / total) * 100 : null);
 
+  // `cubiertas` = auditorias FINALIZADAS. Una auditoria abierta (`auditando`)
+  // puede cancelarse: contarla como cubierta mentiria al cierre del dia.
   return {
     ...t,
-    cobertura_pct: pct(t.con_picking, t.aplican),
+    cobertura_pct: pct(t.cubiertas, t.aplican),
     // Los dos angulos por separado. Mezclarlos esconde el caso interesante: que
     // el mostrador arrastre el porcentaje al piso y tape que las facturas con
-    // cliente identificado si se estan alistando.
-    cobertura_identificado_pct: pct(t.con_cliente_con_picking, t.con_cliente_aplican),
-    cobertura_mostrador_pct: pct(t.mostrador_con_picking, t.mostrador_aplican),
+    // cliente identificado si se estan auditando.
+    cobertura_identificado_pct: pct(t.con_cliente_cubiertas, t.con_cliente_aplican),
+    cobertura_mostrador_pct: pct(t.mostrador_cubiertas, t.mostrador_aplican),
   };
 }
 

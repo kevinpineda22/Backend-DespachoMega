@@ -17,8 +17,6 @@ export const numeroFactura = z
   .min(1, "El numero de factura es obligatorio.")
   .max(40, "Numero de factura demasiado largo.");
 
-export const modo = z.enum(["picking", "auditoria"]);
-
 export const paramsId = z.object({ id: uuid });
 
 // Para configurar a alguien que todavia no entro al modulo: ahi no hay fila
@@ -34,9 +32,16 @@ export const paramsIdItem = z.object({ id: uuid, itemId: uuid });
 // este campo solo cuando detecta la colision.
 export const tipoDocumento = z.string().trim().max(10);
 
+// SIN `modo`: el modulo es solo auditoria. Si un cliente viejo lo manda, Zod
+// descarta la clave desconocida y la apertura sigue (no es 400).
 export const abrirDespachoBody = z.object({
   numero_factura: numeroFactura,
-  modo,
+
+  // Despachador del catalogo (quien entrega fisicamente). OPCIONAL en el
+  // esquema porque este no puede distinguir crear de reanudar: la exigencia
+  // "obligatorio al crear, no al reanudar" vive en `despacho.service.abrir`,
+  // igual que la de `tipo_documento`.
+  despachador_id: uuid.optional(),
 
   // OPCIONAL, y es una decision, no una omision.
   //
@@ -57,6 +62,19 @@ export const validarItemBody = z.object({
   // El operario puede validar de a varias unidades (caja de 12) en vez de
   // escanear doce veces.
   cantidad: z.coerce.number().positive("La cantidad debe ser mayor a cero.").default(1),
+});
+
+// Pasar un item sin escanear: accion guiada por `item_id`, sin codigo ni
+// factor. `cantidad` es entera positiva en unidades base; el tope contra lo
+// facturado lo pone el servicio (necesita leer la linea). `motivo` es opcional:
+// el operario no siempre sabe por que no lee el codigo.
+export const pasarSinEscanearBody = z.object({
+  item_id: uuid,
+  cantidad: z.coerce
+    .number()
+    .int("La cantidad debe ser un numero entero.")
+    .positive("La cantidad debe ser mayor a cero."),
+  motivo: z.string().trim().max(500).optional(),
 });
 
 export const finalizarDespachoBody = z.object({
@@ -118,7 +136,6 @@ export const actualizarAlertaBody = z.object({
 export const bandejaNovedadesQuery = z.object({
   estado: estadoAlerta.optional(),
   motivo: motivoAlerta.optional(),
-  modo: modo.optional(),
   desde: z.string().date().optional(),
   hasta: z.string().date().optional(),
   limite: z.coerce.number().int().min(1).max(500).default(100),
@@ -135,7 +152,6 @@ export const actualizarOperarioBody = z
   .object({
     nombre: z.string().trim().min(3).optional(),
     documento: z.string().trim().max(30).optional(),
-    modo_habilitado: z.enum(["picking", "auditoria", "ambos"]).optional(),
     sede: z.string().trim().max(80).optional(),
     activo: z.boolean().optional(),
   })
@@ -147,7 +163,6 @@ export const rangoFechasQuery = z.object({
   desde: z.string().date().optional(),
   hasta: z.string().date().optional(),
   operario_id: uuid.optional(),
-  modo: modo.optional(),
   limite: z.coerce.number().int().min(1).max(500).default(100),
 });
 
@@ -164,13 +179,11 @@ export const listarAlertasQuery = z.object({
 // porque cualquier string no vacio es truthy. Un filtro que se activa cuando el
 // frontend manda `false` es un bug silencioso, asi que se compara el texto.
 const booleanoQuery = z
-  .enum(["true", "false"])
-  .transform((v) => v === "true")
+  .enum(["true", "false", "1", "0"])
+  .transform((v) => v === "true" || v === "1")
   .optional();
 
 export const etapaFactura = z.enum([
-  "alistando",
-  "alistada",
   "auditando",
   "auditada",
   "aprobada",
@@ -201,8 +214,6 @@ export const listarFacturasQuery = z.object({
 
 export const estadoCobertura = z.enum([
   "sin_tocar",
-  "alistando",
-  "alistada",
   "auditando",
   "auditada",
   "excluida",
@@ -254,11 +265,37 @@ export const listarDespachosQuery = z.object({
       "cancelado",
     ])
     .optional(),
-  modo: modo.optional(),
   operario_id: uuid.optional(),
   numero_factura: z.string().trim().max(40).optional(),
   desde: z.string().date().optional(),
   hasta: z.string().date().optional(),
   limite: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
+});
+
+// --- Catalogo de despachadores ----------------------------------------------
+
+export const crearDespachadorBody = z.object({
+  nombre: z
+    .string()
+    .trim()
+    .min(2, "El nombre del despachador es obligatorio.")
+    .max(80, "Nombre demasiado largo."),
+});
+
+// No hay DELETE: `activo: false` es la baja logica. Un despachador con
+// despachos historicos no puede desaparecer (la FK es NOT NULL).
+export const actualizarDespachadorBody = z
+  .object({
+    nombre: z.string().trim().min(2).max(80).optional(),
+    activo: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "Debe enviar al menos un campo a actualizar.",
+  });
+
+// `todos=1` trae tambien los inactivos; solo el admin puede pedirlo (la regla
+// de rol vive en el controlador).
+export const listarDespachadoresQuery = z.object({
+  todos: booleanoQuery,
 });

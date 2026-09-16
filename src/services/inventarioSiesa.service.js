@@ -142,7 +142,7 @@ async function existenciasDeItem(codigo, bodega) {
  *
  * Un item que falla NO tumba el lote: vuelve con `error: true` y en cero. La
  * alternativa —fallar todo— dejaria al operario sin ninguna existencia porque
- * Siesa tropezo con un codigo. El picking tiene que poder seguir sin esto.
+ * Siesa tropezo con un codigo. La auditoria tiene que poder seguir sin esto.
  */
 export async function existenciasDeItems({ items, bodega }) {
   const codigos = [...new Set((items || []).map((i) => String(i).trim()).filter(Boolean))];

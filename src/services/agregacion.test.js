@@ -4,6 +4,10 @@
  * Cada caso de aca corresponde a un numero que el panel mostraba mal. No son
  * pruebas de "que no explote": son la prueba de que los indicadores dicen lo
  * que dicen que dicen.
+ *
+ * Desde la migracion 012 el modulo es solo auditoria: las vistas ya no traen
+ * `modo`, y aparece `pasados_sin_escanear` como desglose separado de los
+ * escaneos reales. Estos casos fijan ese contrato.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -18,10 +22,10 @@ import {
 } from "./agregacion.js";
 
 describe("agruparPorOperario", () => {
-  it("colapsa los dias en una fila por operario y modo", () => {
+  it("colapsa los dias en una fila por operario", () => {
     const filas = [
-      { operario_id: "u1", nombre: "Ana", modo: "picking", dia: "2026-08-01", despachos: 3, despachos_ok: 3, despachos_con_novedad: 0, items_validados: 30, despachos_finalizados: 3, minutos_totales: 90 },
-      { operario_id: "u1", nombre: "Ana", modo: "picking", dia: "2026-08-02", despachos: 2, despachos_ok: 1, despachos_con_novedad: 1, items_validados: 20, despachos_finalizados: 2, minutos_totales: 30 },
+      { operario_id: "u1", nombre: "Ana", dia: "2026-08-01", despachos: 3, despachos_ok: 3, despachos_con_novedad: 0, items_validados: 30, despachos_finalizados: 3, minutos_totales: 90 },
+      { operario_id: "u1", nombre: "Ana", dia: "2026-08-02", despachos: 2, despachos_ok: 1, despachos_con_novedad: 1, items_validados: 20, despachos_finalizados: 2, minutos_totales: 30 },
     ];
 
     const r = agruparPorOperario(filas);
@@ -40,8 +44,8 @@ describe("agruparPorOperario", () => {
     // peso a un dia de 4 despachos y a uno de 1. El promedio real del rango es
     // 100 min / 5 despachos = 20 min.
     const filas = [
-      { operario_id: "u1", nombre: "Ana", modo: "picking", despachos: 4, despachos_finalizados: 4, minutos_totales: 40, minutos_promedio: 10 },
-      { operario_id: "u1", nombre: "Ana", modo: "picking", despachos: 1, despachos_finalizados: 1, minutos_totales: 60, minutos_promedio: 60 },
+      { operario_id: "u1", nombre: "Ana", despachos: 4, despachos_finalizados: 4, minutos_totales: 40, minutos_promedio: 10 },
+      { operario_id: "u1", nombre: "Ana", despachos: 1, despachos_finalizados: 1, minutos_totales: 60, minutos_promedio: 60 },
     ];
 
     const r = agruparPorOperario(filas);
@@ -50,18 +54,25 @@ describe("agruparPorOperario", () => {
     expect(r[0].minutos_promedio).not.toBe(35);
   });
 
-  it("no colapsa picking con auditoria", () => {
+  it("colapsa a una sola fila por operario, sin campo modo", () => {
+    // Filas viejas que todavia traigan `modo` (por ejemplo, un cliente cacheado)
+    // no pueden partir a la persona en dos: la clave es solo el operario.
     const filas = [
-      { operario_id: "u1", nombre: "Ana", modo: "picking", despachos: 3, despachos_finalizados: 0, minutos_totales: 0 },
-      { operario_id: "u1", nombre: "Ana", modo: "auditoria", despachos: 1, despachos_finalizados: 0, minutos_totales: 0 },
+      { operario_id: "u1", nombre: "Ana", modo: "auditoria", despachos: 3, despachos_finalizados: 0, minutos_totales: 0 },
+      { operario_id: "u1", nombre: "Ana", modo: "otro", despachos: 1, despachos_finalizados: 0, minutos_totales: 0 },
+      { operario_id: "u2", nombre: "Beto", despachos: 1, despachos_finalizados: 0, minutos_totales: 0 },
     ];
 
-    expect(agruparPorOperario(filas)).toHaveLength(2);
+    const r = agruparPorOperario(filas);
+
+    expect(r).toHaveLength(2);
+    expect(r[0]).not.toHaveProperty("modo");
+    expect(r.find((o) => o.operario_id === "u1").despachos).toBe(4);
   });
 
   it("deja el promedio en null cuando nadie finalizo nada", () => {
     const filas = [
-      { operario_id: "u1", nombre: "Ana", modo: "picking", despachos: 2, despachos_finalizados: 0, minutos_totales: 0 },
+      { operario_id: "u1", nombre: "Ana", despachos: 2, despachos_finalizados: 0, minutos_totales: 0 },
     ];
 
     expect(agruparPorOperario(filas)[0].minutos_promedio).toBeNull();
@@ -120,15 +131,23 @@ describe("agruparProductos", () => {
 describe("agruparNovedadesPorItem", () => {
   it("convierte casos sueltos en un conteo por producto", () => {
     const filas = [
-      { codigo_item: "A", descripcion: "Prod A", dia: "2026-08-01", reportes: 3, reportes_abiertos: 1, sin_fisico: 3, averiado: 0, ubicacion_errada: 0, diferencia_cantidad: 0, otro: 0, detectadas_en_auditoria: 0, unidades_faltantes: 12 },
-      { codigo_item: "A", descripcion: "Prod A", dia: "2026-08-03", reportes: 5, reportes_abiertos: 2, sin_fisico: 4, averiado: 1, ubicacion_errada: 0, diferencia_cantidad: 0, otro: 0, detectadas_en_auditoria: 2, unidades_faltantes: 20 },
+      { codigo_item: "A", descripcion: "Prod A", dia: "2026-08-01", reportes: 3, reportes_abiertos: 1, sin_fisico: 3, averiado: 0, ubicacion_errada: 0, diferencia_cantidad: 0, otro: 0, unidades_faltantes: 12 },
+      { codigo_item: "A", descripcion: "Prod A", dia: "2026-08-03", reportes: 5, reportes_abiertos: 2, sin_fisico: 4, averiado: 1, ubicacion_errada: 0, diferencia_cantidad: 0, otro: 0, unidades_faltantes: 20 },
     ];
 
     const r = agruparNovedadesPorItem(filas);
 
     expect(r[0].reportes).toBe(8);
     expect(r[0].unidades_faltantes).toBe(32);
-    expect(r[0].detectadas_en_auditoria).toBe(2);
+    expect(r[0].averiado).toBe(1);
+  });
+
+  it("no expone detectadas_en_auditoria: toda novedad es de auditoria", () => {
+    const filas = [
+      { codigo_item: "A", descripcion: "Prod A", dia: "2026-08-01", reportes: 3, reportes_abiertos: 1, sin_fisico: 3, averiado: 0, ubicacion_errada: 0, diferencia_cantidad: 0, otro: 0, unidades_faltantes: 12 },
+    ];
+
+    expect(agruparNovedadesPorItem(filas)[0]).not.toHaveProperty("detectadas_en_auditoria");
   });
 });
 
@@ -139,8 +158,8 @@ describe("agruparCalidad", () => {
     //
     // Promediar las tasas daria 50%. La tasa real es 99/100 = 99%.
     const filas = [
-      { operario_id: "u1", nombre: "Ana", escaneos: 1, aceptados: 0, rechazados: 1, no_encontrado: 1, no_pertenece: 0, excede_cantidad: 0, item_completo: 0, manuales: 0 },
-      { operario_id: "u1", nombre: "Ana", escaneos: 99, aceptados: 99, rechazados: 0, no_encontrado: 0, no_pertenece: 0, excede_cantidad: 0, item_completo: 0, manuales: 0 },
+      { operario_id: "u1", nombre: "Ana", escaneos: 1, aceptados: 0, rechazados: 1, no_encontrado: 1, no_pertenece: 0, excede_cantidad: 0, item_completo: 0, manuales: 0, pasados_sin_escanear: 0 },
+      { operario_id: "u1", nombre: "Ana", escaneos: 99, aceptados: 99, rechazados: 0, no_encontrado: 0, no_pertenece: 0, excede_cantidad: 0, item_completo: 0, manuales: 0, pasados_sin_escanear: 0 },
     ];
 
     const r = agruparCalidad(filas);
@@ -150,6 +169,22 @@ describe("agruparCalidad", () => {
     expect(r[0].tasa_acierto).not.toBe(50);
   });
 
+  it("suma pasados_sin_escanear sin mezclarlos con rechazados y la tasa usa solo intentos", () => {
+    // La vista ya excluye el pase de `escaneos` y de `rechazados`. Aca solo se
+    // suma el rango: 3 pases en dos dias no pueden tocar la tasa de acierto.
+    const filas = [
+      { operario_id: "u1", nombre: "Ana", escaneos: 10, aceptados: 8, rechazados: 2, no_encontrado: 2, no_pertenece: 0, excede_cantidad: 0, item_completo: 0, manuales: 0, pasados_sin_escanear: 1 },
+      { operario_id: "u1", nombre: "Ana", escaneos: 10, aceptados: 8, rechazados: 2, no_encontrado: 0, no_pertenece: 2, excede_cantidad: 0, item_completo: 0, manuales: 0, pasados_sin_escanear: 2 },
+    ];
+
+    const r = agruparCalidad(filas);
+
+    expect(r[0].pasados_sin_escanear).toBe(3);
+    expect(r[0].rechazados).toBe(4);
+    expect(r[0].escaneos).toBe(20);
+    expect(r[0].tasa_acierto).toBe(80);
+  });
+
   it("deja la tasa en null si no hubo escaneos", () => {
     expect(agruparCalidad([])).toEqual([]);
   });
@@ -157,13 +192,12 @@ describe("agruparCalidad", () => {
 
 describe("totalizar", () => {
   it("suma lo aditivo y NO inventa un total de facturas", () => {
-    // La misma factura aparece en tres grupos: picking, auditoría y un cambio
-    // de estado. `total_facturas` sumado daría 3 para UNA factura — por eso el
-    // total de facturas ya no sale de acá sino de la vista de facturas.
+    // La misma factura aparece en dos grupos por cambio de estado.
+    // `total_facturas` sumado daría 2 para UNA factura — por eso el total de
+    // facturas ya no sale de acá sino de la vista de facturas.
     const resumen = [
-      { dia: "2026-08-01", modo: "picking",   estado: "completado",  total_despachos: 1, total_facturas: 1, items_solicitados: 10, items_validados: 10 },
-      { dia: "2026-08-01", modo: "auditoria", estado: "completado",  total_despachos: 1, total_facturas: 1, items_solicitados: 10, items_validados: 10 },
-      { dia: "2026-08-01", modo: "picking",   estado: "con_novedad", total_despachos: 1, total_facturas: 1, items_solicitados: 5,  items_validados: 3 },
+      { dia: "2026-08-01", estado: "completado",  total_despachos: 2, total_facturas: 2, items_solicitados: 20, items_validados: 20 },
+      { dia: "2026-08-01", estado: "con_novedad", total_despachos: 1, total_facturas: 1, items_solicitados: 5,  items_validados: 3 },
     ];
 
     const t = totalizar(resumen);
@@ -175,18 +209,25 @@ describe("totalizar", () => {
 });
 
 describe("serieDiaria", () => {
-  it("arma una fila por día con picking y auditoría separados y en orden", () => {
+  it("devuelve { dia, despachos, items_validados } por dia, en orden", () => {
     const resumen = [
-      { dia: "2026-08-02", modo: "picking",   total_despachos: 2, items_validados: 20 },
-      { dia: "2026-08-01", modo: "picking",   total_despachos: 1, items_validados: 10 },
-      { dia: "2026-08-01", modo: "auditoria", total_despachos: 3, items_validados: 30 },
+      { dia: "2026-08-02", estado: "completado",  total_despachos: 2, items_validados: 20 },
+      { dia: "2026-08-01", estado: "completado",  total_despachos: 1, items_validados: 10 },
+      { dia: "2026-08-01", estado: "con_novedad", total_despachos: 3, items_validados: 30 },
     ];
 
     const s = serieDiaria(resumen);
 
     expect(s.map((d) => d.dia)).toEqual(["2026-08-01", "2026-08-02"]);
-    expect(s[0]).toMatchObject({ picking: 1, auditoria: 3, items_validados: 40 });
-    expect(s[1]).toMatchObject({ picking: 2, auditoria: 0 });
+    expect(s[0]).toEqual({ dia: "2026-08-01", despachos: 4, items_validados: 40 });
+    expect(s[1]).toEqual({ dia: "2026-08-02", despachos: 2, items_validados: 20 });
+  });
+
+  it("no expone claves picking ni auditoria", () => {
+    const s = serieDiaria([{ dia: "2026-08-01", total_despachos: 1, items_validados: 1 }]);
+
+    expect(s[0]).not.toHaveProperty("picking");
+    expect(s[0]).not.toHaveProperty("auditoria");
   });
 });
 
@@ -204,6 +245,19 @@ describe("mapaDeCalor", () => {
     const martes10 = m.find((c) => c.dia_semana === 2 && c.hora === 10);
     expect(martes10.escaneos).toBe(80);
     expect(martes10.escaneos_ok).toBe(78);
+  });
+
+  it("acumula pasados_sin_escanear por celda, separado de escaneos_ok", () => {
+    const picos = [
+      { dia: "2026-08-04", dia_semana: 2, hora: 10, escaneos: 10, escaneos_ok: 9, pasados_sin_escanear: 2 },
+      { dia: "2026-08-11", dia_semana: 2, hora: 10, escaneos: 10, escaneos_ok: 10, pasados_sin_escanear: 1 },
+    ];
+
+    const [martes10] = mapaDeCalor(picos);
+
+    expect(martes10.pasados_sin_escanear).toBe(3);
+    expect(martes10.escaneos_ok).toBe(19);
+    expect(martes10.escaneos).toBe(20);
   });
 });
 
@@ -227,15 +281,21 @@ describe("facturasPorDiaSemana", () => {
 
   it("acumula las fechas distintas que caen en el mismo dia de semana", () => {
     const r = facturasPorDiaSemana([
-      { dia: "2026-08-04", dia_semana: 2, facturas: 10, facturas_picking: 8, facturas_auditoria: 5 },
-      { dia: "2026-08-11", dia_semana: 2, facturas: 15, facturas_picking: 12, facturas_auditoria: 9 },
+      { dia: "2026-08-04", dia_semana: 2, facturas: 10 },
+      { dia: "2026-08-11", dia_semana: 2, facturas: 15 },
     ]);
 
     expect(r[2].facturas).toBe(25);
-    expect(r[2].facturas_picking).toBe(20);
-    expect(r[2].facturas_auditoria).toBe(14);
     // Sin esto no se sabe si 25 son de un martes o el acumulado de dos.
     expect(r[2].dias_con_datos).toBe(2);
+  });
+
+  it("no expone facturas_picking ni facturas_auditoria", () => {
+    const r = facturasPorDiaSemana([{ dia: "2026-08-11", dia_semana: 2, facturas: 1 }]);
+
+    expect(r[2]).toEqual({ dia_semana: 2, facturas: 1, dias_con_datos: 1 });
+    expect(r[2]).not.toHaveProperty("facturas_picking");
+    expect(r[2]).not.toHaveProperty("facturas_auditoria");
   });
 
   it("NO coincide con sumar las horas del mapa: por eso son dos vistas", () => {

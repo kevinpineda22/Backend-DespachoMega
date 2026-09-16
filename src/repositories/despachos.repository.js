@@ -8,11 +8,15 @@ const TABLA_ITEMS = "despacho_mega_despacho_items";
 const TABLA_ESCANEOS = "despacho_mega_escaneos";
 const TABLA_APROBACIONES = "despacho_mega_aprobaciones";
 
+// `despachador` viaja embebido (PostgREST resuelve la FK) para que abrir,
+// reanudar y obtener devuelvan el nombre sin una consulta extra. `modo` sigue
+// en la tabla con DEFAULT 'auditoria' pero no forma parte del contrato.
 const CAMPOS_DESPACHO = `
-  id, numero_factura, tipo_documento, fecha_factura, modo, estado, operario_id,
+  id, numero_factura, tipo_documento, fecha_factura, estado, operario_id,
   cliente_nit, cliente_nombre, sede, bodega, total_items, items_validados,
-  observaciones, despacho_origen_id, iniciado_at, finalizado_at,
-  created_at, updated_at
+  observaciones, despachador_id, iniciado_at, finalizado_at,
+  created_at, updated_at,
+  despachador:despacho_mega_despachadores!despachador_id (id, nombre, activo)
 `;
 
 const CAMPOS_ITEM = `
@@ -21,13 +25,12 @@ const CAMPOS_ITEM = `
   validado_por, validado_at
 `;
 
-/** Despacho activo (no cancelado) para una factura y un modo. */
-export async function despachoVigente(numeroFactura, modo) {
+/** Despacho activo (no cancelado) para una factura. */
+export async function despachoVigente(numeroFactura) {
   const { data, error } = await supabaseAdmin
     .from(TABLA_DESPACHOS)
     .select(CAMPOS_DESPACHO)
     .eq("numero_factura", numeroFactura)
-    .eq("modo", modo)
     .neq("estado", "cancelado")
     .maybeSingle();
 
@@ -109,11 +112,15 @@ export async function actualizarItem(itemId, cambios) {
   return data;
 }
 
+/**
+ * Inserta un intento (aceptado, rechazado o pase sin escanear). `motivo` solo
+ * tiene sentido con `resultado = 'pasado_sin_escanear'`; en el resto va NULL.
+ */
 export async function registrarEscaneo(escaneo) {
   const { data, error } = await supabaseAdmin
     .from(TABLA_ESCANEOS)
     .insert(escaneo)
-    .select("id, created_at, resultado, codigo_ingresado")
+    .select("id, created_at, resultado, codigo_ingresado, motivo")
     .single();
 
   if (error) throw error;
@@ -124,7 +131,7 @@ export async function escaneosDe(despachoId) {
   const { data, error } = await supabaseAdmin
     .from(TABLA_ESCANEOS)
     .select(
-      "id, item_id, operario_id, codigo_ingresado, codigo_item_resuelto, metodo, resultado, cantidad, created_at",
+      "id, item_id, operario_id, codigo_ingresado, codigo_item_resuelto, metodo, resultado, cantidad, motivo, created_at",
     )
     .eq("despacho_id", despachoId)
     .order("created_at", { ascending: false });
@@ -136,7 +143,6 @@ export async function escaneosDe(despachoId) {
 export async function listar(filtros) {
   const {
     estado,
-    modo,
     operario_id: operarioId,
     numero_factura: numeroFactura,
     desde,
@@ -155,7 +161,6 @@ export async function listar(filtros) {
     .range(offset, offset + limite - 1);
 
   if (estado) consulta = consulta.eq("estado", estado);
-  if (modo) consulta = consulta.eq("modo", modo);
   if (operarioId) consulta = consulta.eq("operario_id", operarioId);
   if (numeroFactura) consulta = consulta.ilike("numero_factura", `%${numeroFactura}%`);
   if (desde) consulta = consulta.gte("iniciado_at", `${desde}T00:00:00Z`);

@@ -15,6 +15,9 @@ export const EVENTO = {
   ITEM_VALIDADO: "item_validado",
   ITEM_AJUSTADO: "item_ajustado",
   ESCANEO_RECHAZADO: "escaneo_rechazado",
+  // Un item pasado sin escanear (con o sin motivo). Evento propio para que la
+  // bitacora lo distinga de un `item_validado` por codigo.
+  ITEM_PASE_REGISTRADO: "item_pase_registrado",
   ALERTA_CREADA: "alerta_creada",
   ALERTA_ACTUALIZADA: "alerta_actualizada",
   DESPACHO_FINALIZADO: "despacho_finalizado",

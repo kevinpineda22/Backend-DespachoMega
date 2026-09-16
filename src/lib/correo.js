@@ -49,7 +49,6 @@ const escapar = (valor) =>
  *
  * @param {object} datos
  * @param {string} datos.numeroFactura
- * @param {string} datos.modo
  * @param {string} datos.codigoItem
  * @param {string} [datos.descripcion]
  * @param {number} datos.cantidadFaltante
@@ -75,7 +74,6 @@ export async function notificarAlertaInventario(datos) {
       <h2 style="color:#2e7d32;margin:0 0 12px">Novedad de inventario</h2>
       <table cellpadding="6" style="border-collapse:collapse;font-size:14px">
         <tr><td><strong>Factura</strong></td><td>${escapar(datos.numeroFactura)}</td></tr>
-        <tr><td><strong>Proceso</strong></td><td>${escapar(datos.modo)}</td></tr>
         <tr><td><strong>Ítem</strong></td><td>${escapar(datos.codigoItem)}</td></tr>
         <tr><td><strong>Descripción</strong></td><td>${escapar(datos.descripcion)}</td></tr>
         <tr><td><strong>Cantidad faltante</strong></td><td>${escapar(datos.cantidadFaltante)}</td></tr>

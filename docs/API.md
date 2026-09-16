@@ -45,7 +45,6 @@ Devuelve el usuario resuelto desde el token.
     "operarioId": "uuid",
     "nombre": "Juan Pérez",
     "rol": "operario",
-    "modoHabilitado": "ambos",
     "sede": "Megamayoristas"
   }
 }
@@ -68,11 +67,23 @@ Responde `{ encabezado, items }`.
 
 ### `POST /api/despachos`
 
-Abre la factura, o **reanuda** el despacho que ya estaba en curso.
+Abre la auditoría de la factura, o **reanuda** la que ya estaba en curso. El
+módulo es **solo auditoría** desde la migración 012: no existe `modo`, y si un
+cliente viejo lo manda, Zod lo descarta sin error.
 
 ```json
-{ "numero_factura": "1520045", "modo": "picking", "tipo_documento": "P05" }
+{ "numero_factura": "1520045", "despachador_id": "uuid", "tipo_documento": "P05" }
 ```
+
+`despachador_id` identifica a quien **despachó físicamente** la factura (catálogo
+`GET /api/despachadores`). Es obligatorio **solo al crear**; al reanudar no se
+envía ni se valida.
+
+| Situación del despachador | Respuesta |
+| ------------------------- | --------- |
+| Falta al crear | `400` |
+| No existe | `404` |
+| Existe pero `activo = false` | `400` |
 
 `tipo_documento` es la **caja** (`ID_TIPO_DOCTO`: `P02`, `P08`, …) y es
 **opcional a propósito**: viene en la consulta a Siesa, así que el flujo normal
@@ -82,8 +93,9 @@ para un empate que casi nunca ocurre.
 
 - `201` si se creó, `200` si se reanudó.
 - Responde `{ despacho, items, reanudado }` (con `despacho.tipo_documento`, para
-  que el operario pueda verificar la caja contra el papel).
-- `409` si la factura ya fue procesada en ese modo.
+  que el operario pueda verificar la caja contra el papel). `despacho` incluye
+  `despachador_id` y `despachador: { id, nombre, activo }`.
+- `409` si la factura ya fue auditada.
 - `403` si el despacho en curso es de otro operario.
 
 #### El único caso que pide la caja: consecutivo en varias cajas
@@ -109,64 +121,26 @@ El cliente muestra el selector **solo con esas cajas** y repite el `POST` con
 > callejón sin salida que en desarrollo no se veía. Al usar `datos`, solo lo que
 > ya se le puede decir al operario en voz alta: nunca tablas ni columnas.
 
-#### `modo: "picking"` — contra la factura
+#### La referencia es lo facturado en Siesa
 
-Trae la factura de Siesa y crea las líneas con las cantidades facturadas.
-
-#### `modo: "auditoria"` — contra el picking, **no** contra la factura
-
-Una auditoría verifica **lo que se alistó**, así que exige un picking ya
-finalizado de esa misma factura:
-
-| Estado del picking | Respuesta |
-| ------------------ | --------- |
-| No existe | `409` *"no tiene picking registrado"* |
-| `en_proceso` | `409` *"todavía está en proceso"* |
-| `rechazado` | `409` *"está en estado rechazado y no se puede auditar"* |
-| Cerró sin alistar nada | `409` *"no hay nada que auditar"* |
-| `completado`, `con_novedad`, `aprobado` | Abre |
-
-Al abrir:
-
-- **No consulta Siesa.** Las líneas salen del picking. Esto permite auditar
-  despachos viejos, aunque la factura ya se haya caído de la ventana de días de
-  Siesa (ver `PENDIENTES.md` §1-ter).
-- `cantidad_solicitada` de cada línea = **lo que el picker validó**, no lo
-  facturado. Si el picking cerró con un faltante ya reportado, auditar contra la
-  factura lo marcaría como faltante otra vez.
-- Solo entran las líneas con cantidad validada mayor a cero: lo que nunca se
-  alistó no tiene nada físico que verificar.
-- `despacho.despacho_origen_id` apunta al picking verificado.
-- La respuesta agrega `picking` con el contexto para el auditor:
-
-```json
-{
-  "picking": {
-    "id": "uuid",
-    "estado": "con_novedad",
-    "operario_id": "uuid",
-    "finalizado_at": "2026-08-10T11:19:17-05:00",
-    "lineas_factura": 24,
-    "lineas_alistadas": 3
-  }
-}
-```
+Trae la factura de Siesa y crea las líneas con las cantidades facturadas:
+`cantidad_solicitada` de cada línea **es lo facturado**. La auditoría verifica la
+factura tal como salió del punto de venta; no hay un alistamiento previo contra
+el que comparar.
 
 ### `GET /api/despachos`
 
-Listado. Query: `estado`, `modo`, `operario_id`, `numero_factura`, `desde`,
-`hasta`, `limite` (máx. 200), `offset`.
+Listado. Query: `estado`, `operario_id`, `numero_factura`, `desde`, `hasta`,
+`limite` (máx. 200), `offset`.
 
 Responde `{ ok, despachos, total }`.
 
 ### `GET /api/despachos/:id`
 
-Detalle completo: `{ despacho, items, escaneos, alertas, aprobaciones, picking }`.
+Detalle completo: `{ despacho, items, escaneos, alertas, aprobaciones }`.
 
-`picking` trae el contexto del picking de origen **solo en auditorías** (mismo
-formato que devuelve `POST /despachos` en modo auditoría); es `null` en picking.
-Se resuelve en el servidor porque el picking puede ser de otro operario. Sirve
-para que el banner "Verificando el alistado" reaparezca al recargar.
+Cada elemento de `escaneos[]` trae `resultado`, `metodo` y `motivo` (solo tiene
+valor en los pases sin escanear; en el resto es `null`).
 
 Un operario solo puede ver los suyos; el admin ve todos.
 
@@ -190,6 +164,36 @@ el rechazo quedó registrado; el resultado va en el cuerpo:
 | `excede_cantidad` | El escaneo supera lo que falta. No se aplica nada.  |
 
 Todos los casos quedan en `despacho_mega_escaneos`.
+
+### `POST /api/despachos/:id/pasar`
+
+Registra un producto **sin escanearlo** (código de barras dañado, empaque sin
+etiqueta, etc.). Disponible en modo lista y en modo cine.
+
+```json
+{ "item_id": "uuid", "cantidad": 6, "motivo": "codigo de barras danado" }
+```
+
+- `cantidad`: entera positiva, en unidades base. Puede ser **parcial**: la
+  línea queda `parcial` o `completa` según `validada + cantidad` frente a lo
+  solicitado.
+- `motivo`: opcional, máximo 500 caracteres. Se guarda tal cual (o `null`).
+
+**Responde 200 incluso cuando rechaza**, igual que `validar`:
+
+| `resultado`            | Significado                                                        |
+| ---------------------- | ------------------------------------------------------------------ |
+| `pasado_sin_escanear`  | Aceptado. Trae `item`, `despacho` y `motivo`.                       |
+| `excede_cantidad`      | Rechazado entero: `cantidad_validada` no cambia. Trae `item`.       |
+
+Otros códigos: `403` (despacho de otro operario), `404` (despacho o ítem
+inexistente), `409` (despacho no `en_proceso`).
+
+El pase queda en `despacho_mega_escaneos` con `metodo = "pase"`,
+`resultado = "pasado_sin_escanear"`, `codigo_ingresado = codigo_item` y el
+`motivo`, más un evento `item_pase_registrado`. **No cuenta como rechazo ni como
+intento de escaneo** en ninguna vista: las columnas `escaneos` y
+`escaneos_rechazados` lo excluyen, y se reporta aparte en `pasados_sin_escanear`.
 
 ### `GET /api/despachos/:id/resolver?codigo=<barra|item>`
 
@@ -266,7 +270,7 @@ lo suyo, el admin ve todo.
       "id": 41,
       "evento": "despacho_abierto",
       "actor_correo": "operario@merkahorrosas.com",
-      "payload": { "numero_factura": "75812", "modo": "picking" },
+      "payload": { "numero_factura": "75812", "despachador_id": "uuid" },
       "created_at": "2026-08-10T13:02:11.000Z"
     }
   ]
@@ -277,9 +281,9 @@ lo suyo, el admin ve todo.
 
 ## Panel de facturas · solo admin
 
-Una fila por **factura**, con el picking y la auditoría pivotados. El resto de
-la API razona en despachos (una sesión de trabajo); esto razona en facturas, que
-es la unidad que supervisa el administrador.
+Una fila por **factura** (su auditoría). El resto de la API razona en despachos
+(una sesión de trabajo); esto razona en facturas, que es la unidad que supervisa
+el administrador.
 
 > No confundir con `GET /api/facturas/:numero`, que consulta **Siesa**. Esto
 > consulta lo que pasó con la factura **dentro del módulo**.
@@ -289,12 +293,11 @@ es la unidad que supervisa el administrador.
 Query: `etapa`, `operario_id`, `texto`, `sede`, `desde`, `hasta`,
 `con_novedades`, `con_diferencia`, `estancadas_minutos`, `limite`, `offset`.
 
-- `etapa`: `alistando` · `alistada` · `auditando` · `auditada` · `aprobada` ·
-  `rechazada`. **`con_novedad` no es una etapa**, es una bandera
-  (`novedades_abiertas`): como estado tapaba el dato de si la factura ya se
-  había auditado.
+- `etapa`: `auditando` · `auditada` · `aprobada` · `rechazada`.
+  **`con_novedad` no es una etapa**, es una bandera (`novedades_abiertas`):
+  como estado tapaba el dato de si la factura ya se había auditado.
 - `texto` busca en número de factura **y** en nombre del cliente.
-- `operario_id` matchea al operario de **cualquiera** de las dos etapas.
+- `operario_id` es el operario de la auditoría.
 - `con_novedades` y `con_diferencia` son booleanos por texto: `"true"` /
   `"false"`. Solo se aplican con `"true"`.
 - `estancadas_minutos` filtra facturas sin movimiento hace más de N minutos y
@@ -309,49 +312,56 @@ Query: `etapa`, `operario_id`, `texto`, `sede`, `desde`, `hasta`,
       "numero_factura": "75812",
       "cliente_nombre": "DISTRIBUIDORA X SAS",
       "etapa": "auditando",
-      "picking_operario_nombre": "Juan Pérez",
-      "picking_avance_pct": 100,
-      "picking_minutos": 42.5,
-      "auditoria_operario_nombre": "Ana Gómez",
-      "auditoria_avance_pct": 60,
-      "novedades_abiertas": 1,
+      "despacho_id": "uuid",
+      "estado": "en_proceso",
+      "operario_nombre": "Ana Gómez",
+      "despachador_id": "uuid",
+      "despachador": "Carlos Pérez",
+      "avance_pct": 60,
+      "minutos": 42.5,
+      "escaneos": 30,
       "escaneos_rechazados": 3,
+      "escaneados": 27,
+      "pasados_sin_escanear": 2,
+      "novedades_abiertas": 1,
       "tiene_diferencia": false,
       "unidades_diferencia": null,
       "ultimo_movimiento_at": "2026-08-10T14:21:00.000Z"
     }
   ],
   "total": 37,
-  "conteo_por_etapa": { "alistando": 4, "auditada": 12 }
+  "conteo_por_etapa": { "auditando": 4, "auditada": 12 }
 }
 ```
 
-Los `*_avance_pct` salen de **unidades**, no de líneas completas:
-`items_validados` cuenta líneas y como barra de progreso salta a escalones.
+- Las columnas ya no llevan prefijo `auditoria_*` ni existen `picking_*`:
+  `despacho_id`, `estado`, `operario_*`, `finalizado_at`, `minutos`,
+  `total_items`, `items_validados`, `unidades_*`, `escaneos`,
+  `escaneos_rechazados`, `avance_pct`.
+- `escaneados` (resultado `aceptado`) y `pasados_sin_escanear` van **separados**.
+  `escaneos` son los intentos reales de lectura (`aceptados + rechazados`); el
+  pase no entra en ninguno de los dos.
+- `avance_pct` sale de **unidades**, no de líneas completas: `items_validados`
+  cuenta líneas y como barra de progreso salta a escalones.
 
 ### `GET /api/panel/facturas/:numero`
 
-Todo lo del panel lateral en una sola llamada: `resumen`, `picking`,
-`auditoria`, `comparativo` y `linea_tiempo`.
-
-`comparativo` cruza las líneas de las dos etapas:
+Todo lo del panel lateral en una sola llamada:
 
 ```json
 {
-  "linea": 3,
-  "codigo_item": "188745",
-  "facturado": 24,
-  "alistado": 24,
-  "auditado": 22,
-  "diferencia_picking": 0,
-  "diferencia_auditoria": -2
+  "resumen": { "numero_factura": "75812", "etapa": "auditada", "despachador": "Carlos Pérez", "...": "..." },
+  "auditoria": { "despacho": {}, "items": [], "escaneos": [], "alertas": [], "eventos": [] },
+  "linea_tiempo": []
 }
 ```
 
-El cruce **no** es por número de línea: `abrirAuditoria` renumera desde 1 sobre
-las líneas efectivamente alistadas. Se cruza por código de ítem y en orden,
-consumiendo de a uno, porque una factura puede repetir el mismo producto en
-varias líneas.
+- `resumen` es la fila de `vw_facturas` (incluye `despachador`).
+- `auditoria.escaneos[]` trae `resultado` y `motivo` por escaneo: así el panel
+  distingue lo leído con el lector (`aceptado`) de lo pasado a mano
+  (`pasado_sin_escanear`) y muestra el motivo cuando el operario lo escribió
+  (`null` si no).
+- `linea_tiempo` son los eventos de la auditoría en orden cronológico.
 
 `404` si la factura no tiene ningún despacho registrado.
 
@@ -364,7 +374,7 @@ Responde: **"de todo lo que Siesa facturó hoy, ¿qué pasó por el módulo?"**
 El resto de la API solo conoce las facturas que alguien tecleó. Una factura que
 nadie abrió nunca es invisible — y es justo la que hay que encontrar antes de
 cerrar el día. Medido el 10/8/2026, antes de que esto existiera: de 36
-documentos en la ventana de Siesa, 5 tenían picking.
+documentos en la ventana de Siesa, 5 habían pasado por el módulo.
 
 > **Se lee de un snapshot propio, no de Siesa.** Las tablas POS conservan ~4 días
 > (§1-ter), así que consultar en vivo haría imposible revisar la semana pasada.
@@ -377,8 +387,7 @@ Query: `desde`, `hasta`, `cobertura`, `tipo_documento`, `texto`.
 Sin rango, **hoy en horario de Bogotá** (no en UTC: después de las 19:00 serían
 días distintos).
 
-Estados de `cobertura`: `sin_tocar` · `alistando` · `alistada` · `auditando` ·
-`auditada` · `excluida`.
+Estados de `cobertura`: `sin_tocar` · `auditando` · `auditada` · `excluida`.
 
 ```json
 {
@@ -391,21 +400,31 @@ Estados de `cobertura`: `sin_tocar` · `alistando` · `alistada` · `auditando` 
       "cliente_nombre": "OROZCO BRAVO JUAN DIEGO",
       "lineas": 11,
       "valor_neto": 213150,
-      "picking_hecho": false,
-      "auditoria_hecha": false,
+      "despacho_id": null,
+      "despacho_estado": null,
+      "operario_nombre": null,
+      "despachador": null,
+      "finalizado_at": null,
       "cobertura": "sin_tocar"
     }
   ],
   "resumen_por_dia": [
-    { "dia": "2026-08-10", "facturadas": 4, "con_picking": 1, "sin_tocar": 3 }
+    { "dia": "2026-08-10", "facturadas": 4, "aplican": 4, "cubiertas": 1, "auditando": 0, "sin_tocar": 3 }
   ],
-  "totales": { "aplican": 4, "con_picking": 1, "sin_tocar": 3, "cobertura_pct": 25 }
+  "totales": {
+    "aplican": 4, "cubiertas": 1, "auditando": 0, "sin_tocar": 3,
+    "mostrador_aplican": 2, "mostrador_cubiertas": 0,
+    "con_cliente_aplican": 2, "con_cliente_cubiertas": 1,
+    "cobertura_pct": 25, "cobertura_mostrador_pct": 0, "cobertura_identificado_pct": 50
+  }
 }
 ```
 
-`picking_hecho` es **finalizado**, no abierto: un picking en curso todavía puede
-cancelarse, y contarlo como cubierto sería mentir justo en el momento en que el
-dato importa.
+**`cubiertas` = auditorías finalizadas** (`finalizado_at` no nulo). Una
+auditoría abierta (`auditando`) todavía puede cancelarse, y contarla como
+cubierta sería mentir justo en el momento en que el dato importa.
+`cobertura_pct = cubiertas / aplican`; los ángulos mostrador y cliente
+identificado usan sus propias `*_cubiertas` / `*_aplican`.
 
 `cobertura_pct` es `null` —no 100— cuando no hay facturas: un día sin ventas no
 es un día perfecto, es un día sin datos.
@@ -478,11 +497,11 @@ Al reabrir (`en_gestion`) se limpia `resuelta_at`, porque `minutos_abierta` usa
 ### `GET /api/panel/novedades` · solo admin
 
 Bandeja del administrador. Es una lectura distinta de `GET /api/alertas` —esa la
-usa también el operario— y agrega lo que la tabla sola no da: antigüedad, etapa
-en la que se detectó y el **nombre** de quien atendió (`atendida_por` apunta a
+usa también el operario— y agrega lo que la tabla sola no da: antigüedad, la
+factura del despacho y el **nombre** de quien atendió (`atendida_por` apunta a
 `auth.users`, así que PostgREST no lo resuelve con un join automático).
 
-Query: `estado`, `motivo`, `modo`, `desde`, `hasta`, `limite`.
+Query: `estado`, `motivo`, `desde`, `hasta`, `limite`.
 
 ```json
 {
@@ -494,7 +513,6 @@ Query: `estado`, `motivo`, `modo`, `desde`, `hasta`, `limite`.
       "motivo": "sin_fisico",
       "estado": "en_gestion",
       "minutos_abierta": 142.5,
-      "modo": "auditoria",
       "comentario": "no había físico en la ubicación",
       "respuesta": null,
       "reportada_por_nombre": "Juan Pérez",
@@ -505,8 +523,8 @@ Query: `estado`, `motivo`, `modo`, `desde`, `hasta`, `limite`.
 }
 ```
 
-Una novedad con `modo = "auditoria"` pesa más que una de picking: significa que
-el picking la dejó pasar.
+Toda novedad es de auditoría: significa que el producto facturado no estaba
+físicamente al despachar.
 
 ---
 
@@ -524,10 +542,14 @@ Query opcional: `activos=true`.
 
 ### `PATCH /api/operarios/:id`
 
-Campos: `nombre`, `documento`, `modo_habilitado`, `sede`, `activo`.
+Campos: `nombre`, `documento`, `sede`, `activo`.
 
 `rol` **no** se edita: se deriva de la ruta asignada en cada request, así que
 ponerlo a mano duraría hasta el próximo ingreso de la persona.
+
+`modo_habilitado` **ya no se acepta** (Zod lo descarta): la columna sigue en la
+tabla con el único valor `auditoria` y viaja así en las respuestas de
+`GET /api/operarios`.
 
 ### `GET /api/operarios/:id/actividad`
 
@@ -543,20 +565,69 @@ admin que aprueba el despacho de otro aparece acá y no allá.
 
 ---
 
+## Despachadores
+
+Catálogo de quienes **despachan físicamente** la mercancía. No son usuarios de
+la intranet: son nombres que el auditor elige al abrir una factura, para que
+quede registrado quién la despachó. Lo administra el admin; el operario solo lo
+lee.
+
+### `GET /api/despachadores` · operario o admin
+
+Por defecto devuelve solo `activo = true`, ordenados por `nombre`.
+
+Query: `todos=1` (o `true`) incluye los inactivos. **Solo admin**: otro rol
+recibe `403`.
+
+```json
+{ "ok": true, "despachadores": [ { "id": "uuid", "nombre": "Carlos Pérez", "activo": true, "created_at": "…", "updated_at": "…" } ] }
+```
+
+### `POST /api/despachadores` · solo admin
+
+```json
+{ "nombre": "Carlos Pérez" }
+```
+
+- `201 { despachador }`.
+- `400` si el nombre está vacío (se recorta antes de validar; 2–80 caracteres).
+- `409` si ya existe otro con el mismo nombre, sin distinguir mayúsculas ni
+  espacios al borde (índice único sobre `lower(trim(nombre))`).
+
+### `PATCH /api/despachadores/:id` · solo admin
+
+```json
+{ "nombre": "Carlos A. Pérez", "activo": false }
+```
+
+Al menos un campo. `200 { despachador }`; `404` si no existe; `409` si el nombre
+nuevo choca con otro.
+
+**No hay `DELETE`.** La baja es `activo = false`: el despachador deja de
+ofrecerse al abrir auditorías nuevas, pero sigue apareciendo por JOIN en los
+despachos históricos que ya lo tienen.
+
+---
+
 ## Analítica · solo admin
 
-Query común: `desde`, `hasta` (`YYYY-MM-DD`), `modo`, `operario_id`, `limite`.
-Sin rango, los últimos 30 días.
+Query común: `desde`, `hasta` (`YYYY-MM-DD`), `operario_id`, `limite`.
+Sin rango, los últimos 30 días. No existe filtro `modo`: si llega, se descarta.
 
 | Endpoint                       | Devuelve                                      |
 | ------------------------------ | --------------------------------------------- |
 | `/analitica/tablero`           | Todo lo de abajo en una sola llamada           |
-| `/analitica/resumen`           | Serie diaria: picking vs auditoría por día     |
-| `/analitica/por-operario`      | Una fila por operario y modo, no por día       |
+| `/analitica/resumen`           | Serie diaria `{ dia, despachos, items_validados }` |
+| `/analitica/por-operario`      | Una fila por operario, no por día              |
 | `/analitica/productos-top`     | Top del rango, no de pares producto-día        |
-| `/analitica/picos-trabajo`     | Grilla día de semana × hora                    |
+| `/analitica/picos-trabajo`     | Grilla día de semana × hora, con `pasados_sin_escanear` |
 | `/analitica/novedades`         | Novedades con tiempo abierta                   |
-| `/analitica/calidad-escaneo`   | Aciertos y rechazos por operario, por tipo     |
+| `/analitica/calidad-escaneo`   | Aciertos, rechazos y `pasados_sin_escanear` por operario |
+
+`facturas_por_dia_semana` devuelve `{ dia_semana, facturas, dias_con_datos }`
+para los siete días. En calidad y picos, `pasados_sin_escanear` va **aparte** de
+`aceptados` / `escaneos_ok` y no cuenta como intento ni como rechazo: la tasa de
+acierto mide solo lecturas reales del lector.
 
 ### Todo llega ya agregado al rango
 
@@ -564,9 +635,9 @@ Las vistas agrupan **por día**; estos endpoints devuelven el rango colapsado. N
 es un detalle de comodidad: las vistas diarias no se pueden sumar a ojo.
 
 - **`COUNT(DISTINCT …)` no es aditivo.** `total_facturas` del resumen diario está
-  por día+modo+estado; sumarlo contaba la misma factura una vez por picking, otra
-  por auditoría y otra si cambiaba de estado. Por eso `totales.facturas` sale de
-  `despacho_mega_vw_facturas`, que tiene una fila por factura.
+  por día+estado; sumarlo contaba la misma factura otra vez si cambiaba de
+  estado. Por eso `totales.facturas` sale de `despacho_mega_vw_facturas`, que
+  tiene una fila por factura.
 - **`AVG(…)` tampoco.** `minutos_promedio` es por día, y promediar promedios le
   da el mismo peso a un día de 2 despachos y a uno de 20. La migración 007 agregó
   `minutos_totales` y `despachos_finalizados` para recalcularlo exacto.
@@ -592,6 +663,7 @@ La regla vive en `src/services/agregacion.js` y está cubierta por tests.
 }
 ```
 
-`tasa_discrepancia` es de lo auditado cuánto no coincidió con lo alistado —
-**la métrica que justifica el módulo**. Solo cuenta auditorías cerradas: mientras
-una corre, todo lo que el auditor aún no escaneó se vería como diferencia.
+`tasa_discrepancia` es, de las auditorías cerradas, cuántas quedaron con
+faltante frente a lo facturado — **la métrica que justifica el módulo**. Solo
+cuenta auditorías cerradas: mientras una corre, todo lo que el auditor aún no
+escaneó se vería como diferencia.

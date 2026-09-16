@@ -11,6 +11,51 @@ ninguno de los dos puede decir por sí solo: **quién va adelante de quién**.
 
 ---
 
+## 0. Cambio auditor-only (septiembre 2026): despliegue CONJUNTO, no "backend primero"
+
+El backend pasó a **solo auditoría** (`docs/PLAN-AUDITOR-ONLY-WORKFLOW.md`,
+`openspec/changes/auditor-only-workflow/`). Es el primer cambio del módulo que
+**rompe en las dos direcciones**: el backend nuevo no sirve al frontend actual
+y el frontend nuevo no funciona contra el backend actual. La regla de §10
+("backend antes que frontend") **no aplica** aquí: hay que coordinar una
+ventana y desplegar los dos juntos, después de correr la migración `012`.
+
+Cambios incompatibles con el frontend actual (`src/pages/DespachoMega`):
+
+| Contrato | Antes | Ahora |
+| -------- | ----- | ----- |
+| `POST /despachos` | `{ numero_factura, modo }` | `{ numero_factura, despachador_id }`; `modo` se descarta; `despachador_id` obligatorio al crear (`400`/`404`) |
+| Respuesta de abrir / `GET /despachos/:id` | traía `picking`, `sin_picking` | sin esas claves; `despacho.despachador { id, nombre, activo }`; `escaneos[].motivo` |
+| `GET /panel/facturas` | columnas `picking_*` / `auditoria_*`; etapas `alistando`/`alistada` | sin prefijo (`despacho_id`, `estado`, `operario_*`, `avance_pct`, `minutos`); `despachador`, `escaneados`, `pasados_sin_escanear`; etapas `auditando`/`auditada`/`aprobada`/`rechazada` |
+| `GET /panel/facturas/:numero` | `{ resumen, picking, auditoria, comparativo, linea_tiempo }` | `{ resumen, auditoria, linea_tiempo }` |
+| `GET /panel/cobertura` | `alistando`/`alistada`, `con_picking`, `picking_hecho`, `auditoria_hecha` | `cubiertas`, `auditando`, `mostrador_cubiertas`, `con_cliente_cubiertas`; filas con `despacho_id`, `despacho_estado`, `operario_nombre`, `despachador`, `finalizado_at` |
+| `GET /analitica/*` | `modo` en query; `serie_diaria { picking, auditoria }`; `por_operario` por operario+modo; `facturas_picking`/`facturas_auditoria` | sin `modo`; `serie_diaria { dia, despachos, items_validados }`; una fila por operario; `pasados_sin_escanear` en calidad y picos |
+| `GET /panel/novedades` | filtro y columna `modo`; `detectadas_en_auditoria` | sin `modo`; sin `detectadas_en_auditoria` |
+| `PATCH /operarios/:id` | aceptaba `modo_habilitado` | lo descarta; siempre `auditoria` |
+
+Nuevo, que el frontend debe consumir:
+
+- `GET /despachadores` (select al abrir), `POST` y `PATCH /despachadores/:id`
+  (CRUD admin, baja lógica con `activo=false`).
+- `POST /despachos/:id/pasar` (pasar sin escanear, cantidad parcial, motivo
+  opcional) en modo lista y modo cine.
+
+Migración `012` es **destructiva** (trunca las tablas transaccionales del módulo
+y recrea los enums): solo es válida porque los datos actuales son de prueba.
+Backup o branch de Supabase antes de correrla. Ver `PENDIENTES.md` §13.
+
+### Qué hacer
+
+- [ ] Correr `db/migrations/012_auditor_only_reset.sql` en Supabase y verificar
+      con las consultas del final del archivo.
+- [ ] Desplegar backend y frontend **en la misma ventana**.
+- [ ] Smoke: crear despachador, abrir con `despachador_id`, pasar un producto
+      sin escanear (parcial, con y sin motivo), exceso rechazado,
+      `GET /panel/facturas` muestra `despachador`, `escaneados`,
+      `pasados_sin_escanear`.
+
+---
+
 ## 1. Lo primero: el backend tiene trabajo sin commitear que el front ya usa
 
 **Riesgo activo.** Si alguien despliega el frontend de `origin` contra el backend
@@ -41,8 +86,8 @@ Qué agregan, exactamente:
   línea, **sin mutar**. Consumido en `DespachoMegaOperario.jsx:314`.
 - `POST /despachos/:id/items/:itemId/ajustar` — fija el total **absoluto** de una
   línea; `0` la devuelve a pendientes. Consumido en `useDMDespacho.js:106`.
-- `GET /despachos/:id` ahora devuelve `picking` (contexto del picking de origen,
-  `null` si no es auditoría). Consumido en `useDMDespacho.js:47` y `:172`.
+- ~~`GET /despachos/:id` devuelve `picking`~~ — **retirado** por el cambio
+  auditor-only (§0); el banner de `useDMDespacho.js` sale con ese cambio.
 - Evento nuevo `item_ajustado` en `eventos.repository.js`.
 
 ### Qué hacer
@@ -81,6 +126,8 @@ Referencia rápida para no reimplementar lo que ya existe.
 | `GET /facturas/:numero` | Sí | `dmApi.previsualizarFactura` |
 | `POST /despachos` · `GET /despachos` · `GET /despachos/:id` | Sí | `dmApi` |
 | `POST /despachos/:id/validar` | Sí | `dmApi.validarItem` |
+| `POST /despachos/:id/pasar` | **Pendiente en el front** (§0) | — |
+| `GET /despachadores` · `POST` · `PATCH /despachadores/:id` | **Pendiente en el front** (§0) | — |
 | `GET /despachos/:id/resolver` | Sí | **backend sin commitear** (§1) |
 | `POST /despachos/:id/items/:itemId/ajustar` | Sí | **backend sin commitear** (§1) |
 | `POST /despachos/:id/finalizar` | Sí | `dmApi.finalizarDespacho` |
@@ -150,7 +197,7 @@ Detalle completo en `PENDIENTES.md`. Resumen ordenado por prioridad:
 | 3 | Forzar cambio de contraseña en el primer ingreso — y que **`/yo` devuelva la bandera** | Alta |
 | 4 | Concurrencia en `validar()`: escritura condicional en `actualizarItem` | Media |
 | 9 | Cron que avise novedades viejas (hoy el semáforo solo se ve entrando al panel) | Media |
-| 7 | Tests: hay 2 (`comparativo`, `agregacion`). Faltan `normalizarFactura`, `extraerFilas`, la máquina de estados de `validar()` | Baja |
+| 7 | Tests: 8 archivos (`agregacion`, `despachoMega.schema`, `despacho.service`, `despachador.service`, `factura.service`, `cobertura.service`, `alerta.service`, `operario.service`). Faltan `normalizarFactura`, `extraerFilas`, la máquina de estados de `validar()` | Baja |
 | 8 | Techo de 5.000 filas por vista. Si se alcanza, agregar por semana/mes en SQL — no subir el número | Baja |
 
 > **El §3 tiene una mitad de frontend.** El punto de enganche ya está: el
@@ -229,7 +276,9 @@ previsto.
 ## 10. Checklist antes de cada despliegue
 
 - [ ] `git status` limpio en **los dos** repos.
-- [ ] El backend se despliega **antes** que el frontend cuando hay endpoints nuevos.
+- [ ] El backend se despliega **antes** que el frontend cuando hay endpoints nuevos
+      y el contrato viejo sigue funcionando. Si el cambio rompe en las dos
+      direcciones (como el auditor-only, §0), se despliegan **juntos**.
 - [ ] Las migraciones nuevas se corrieron en Supabase, **de a una y en orden**.
 - [ ] `@supabase/supabase-js` sigue en la misma versión en los dos lados.
 - [ ] El frontend se mergeó a `master` (hoy el trabajo vive en `Johan`).

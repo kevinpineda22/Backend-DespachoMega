@@ -3,8 +3,8 @@
  *
  * El resto del modulo razona en despachos (una sesion de trabajo). El
  * supervisor no: el quiere una linea por factura y saber en que etapa va. Esta
- * capa hace esa traduccion y arma el comparativo picking <-> auditoria, que es
- * lo unico que responde "¿lo que salio es lo que decia la factura?".
+ * capa hace esa traduccion y arma el detalle de la auditoria, que es lo que
+ * responde "¿lo que salio es lo que decia la factura?".
  *
  * Es de uso exclusivo del admin: las rutas lo montan detras de `requireAdmin`,
  * asi que aca no se filtra por operario.
@@ -13,7 +13,6 @@ import * as facturasRepo from "../repositories/facturas.repository.js";
 import * as despachosRepo from "../repositories/despachos.repository.js";
 import * as alertasRepo from "../repositories/alertas.repository.js";
 import * as eventosRepo from "../repositories/eventos.repository.js";
-import { compararLineas } from "./comparativo.js";
 import { noEncontrado } from "../lib/errores.js";
 
 export async function listar(filtros) {
@@ -42,8 +41,11 @@ async function detalleDespacho(despacho) {
 /**
  * Todo lo que necesita el panel lateral de una factura, en una sola llamada.
  *
- * Pedirlo por partes serian seis requests para pintar una misma pantalla, con
- * el agravante de que el comparativo no se puede armar hasta tenerlas todas.
+ * Pedirlo por partes serian cinco requests para pintar una misma pantalla.
+ *
+ * Cada escaneo viaja con `resultado` y `motivo`: asi el panel distingue lo que
+ * se leyo con el lector (`aceptado`) de lo que el operario paso sin escanear
+ * (`pasado_sin_escanear`), y muestra por que cuando lo escribio.
  */
 export async function detalle(numeroFactura) {
   const resumen = await facturasRepo.porNumero(numeroFactura);
@@ -54,45 +56,13 @@ export async function detalle(numeroFactura) {
     );
   }
 
-  const [picking, auditoria] = await Promise.all([
-    resumen.picking_id ? despachosRepo.porId(resumen.picking_id) : null,
-    resumen.auditoria_id ? despachosRepo.porId(resumen.auditoria_id) : null,
-  ]);
+  const despacho = await despachosRepo.porId(resumen.despacho_id);
+  const auditoria = await detalleDespacho(despacho);
 
-  const [detallePicking, detalleAuditoria] = await Promise.all([
-    detalleDespacho(picking),
-    detalleDespacho(auditoria),
-  ]);
-
-  // La auditoria es DERIVADA si se creo copiando lo alistado de ESTE picking.
-  // Si se abrio por su cuenta contra Siesa, `despacho_origen_id` viene en null
-  // y las dos listas son independientes: el cruce no puede asumir que una
-  // linea sin alistar no tiene contraparte.
-  const auditoriaDerivada =
-    Boolean(auditoria?.despacho_origen_id) &&
-    auditoria.despacho_origen_id === picking?.id;
-
-  // Se arma tambien SIN picking. Antes devolvia [] y el panel mostraba la
-  // tabla vacia: una auditoria hecha sin alistado previo no tenia donde verse.
-  const comparativo = compararLineas(
-    detallePicking?.items ?? [],
-    detalleAuditoria?.items ?? [],
-    { auditoriaDerivada },
+  // La bitacora viene de mas reciente a mas viejo; el panel la lee de corrido.
+  const lineaTiempo = [...(auditoria?.eventos ?? [])].sort(
+    (a, b) => new Date(a.created_at) - new Date(b.created_at),
   );
 
-  // Una sola linea de tiempo con las dos etapas entrelazadas: leer dos
-  // bitacoras en paralelo y ordenarlas mentalmente es justo el trabajo que el
-  // panel tiene que ahorrar.
-  const lineaTiempo = [
-    ...(detallePicking?.eventos ?? []).map((e) => ({ ...e, etapa: "picking" })),
-    ...(detalleAuditoria?.eventos ?? []).map((e) => ({ ...e, etapa: "auditoria" })),
-  ].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-  return {
-    resumen,
-    picking: detallePicking,
-    auditoria: detalleAuditoria,
-    comparativo,
-    linea_tiempo: lineaTiempo,
-  };
+  return { resumen, auditoria, linea_tiempo: lineaTiempo };
 }

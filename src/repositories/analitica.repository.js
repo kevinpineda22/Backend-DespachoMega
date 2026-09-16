@@ -32,25 +32,26 @@ async function ejecutar(consulta) {
   return data;
 }
 
-export async function resumenDiario({ desde, hasta, modo }) {
-  let consulta = supabaseAdmin
-    .from("despacho_mega_vw_resumen_diario")
-    .select("*")
-    .order("dia", { ascending: false });
-
-  if (modo) consulta = consulta.eq("modo", modo);
-  consulta = rango(consulta, "dia", desde, hasta);
+export async function resumenDiario({ desde, hasta }) {
+  const consulta = rango(
+    supabaseAdmin
+      .from("despacho_mega_vw_resumen_diario")
+      .select("*")
+      .order("dia", { ascending: false }),
+    "dia",
+    desde,
+    hasta,
+  );
 
   return ejecutar(consulta);
 }
 
-export async function porOperario({ desde, hasta, modo, operario_id: operarioId }) {
+export async function porOperario({ desde, hasta, operario_id: operarioId }) {
   let consulta = supabaseAdmin
     .from("despacho_mega_vw_por_operario")
     .select("*")
     .order("dia", { ascending: false });
 
-  if (modo) consulta = consulta.eq("modo", modo);
   if (operarioId) consulta = consulta.eq("operario_id", operarioId);
   consulta = rango(consulta, "dia", desde, hasta);
 

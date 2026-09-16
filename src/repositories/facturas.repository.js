@@ -1,9 +1,10 @@
 /**
  * facturas.repository.js — Lectura de `despacho_mega_vw_facturas`.
  *
- * La vista pivota picking y auditoria a una fila por factura (ver
- * db/migrations/006). Aca solo se filtra, ordena y pagina: la definicion de
- * "etapa" y de "diferencia" vive en SQL, no repartida entre backend y frontend.
+ * La vista tiene una fila por auditoria, con el despachador resuelto por JOIN
+ * (ver db/migrations/012). Aca solo se filtra, ordena y pagina: la definicion
+ * de "etapa" y de "diferencia" vive en SQL, no repartida entre backend y
+ * frontend.
  */
 import { supabaseAdmin } from "../config/supabase.js";
 
@@ -43,13 +44,7 @@ export async function listar(filtros) {
   if (etapa) consulta = consulta.eq("etapa", etapa);
   if (sede) consulta = consulta.eq("sede", sede);
 
-  // El operario puede haber intervenido en cualquiera de las dos etapas. Buscar
-  // solo por una dejaria fuera al auditor cuando se filtra por su nombre.
-  if (operarioId) {
-    consulta = consulta.or(
-      `picking_operario_id.eq.${operarioId},auditoria_operario_id.eq.${operarioId}`,
-    );
-  }
+  if (operarioId) consulta = consulta.eq("operario_id", operarioId);
 
   if (texto) {
     const t = limpiarParaOr(texto);
@@ -74,7 +69,7 @@ export async function listar(filtros) {
     const corte = new Date(Date.now() - estancadasMinutos * 60 * 1000).toISOString();
     consulta = consulta
       .lt("ultimo_movimiento_at", corte)
-      .in("etapa", ["alistando", "auditando"]);
+      .eq("etapa", "auditando");
   }
 
   const { data, error, count } = await consulta;
@@ -101,10 +96,9 @@ const TECHO_FILAS = 5000;
  * Indicadores del rango calculados sobre la vista de facturas.
  *
  * ES LA FUENTE CORRECTA PARA "TOTAL DE FACTURAS". El resumen diario trae
- * `total_facturas` como COUNT(DISTINCT) por dia+modo+estado, y sumarlo contaba
- * la misma factura una vez por picking, otra por auditoria y otra vez si
- * cambiaba de estado. Aca hay exactamente una fila por factura, asi que contar
- * filas es contar facturas.
+ * `total_facturas` como COUNT(DISTINCT) por dia+estado, y sumarlo contaba la
+ * misma factura otra vez si cambiaba de estado. Aca hay exactamente una fila
+ * por factura, asi que contar filas es contar facturas.
  *
  * Se trae una sola vez y se cuenta en memoria: seis `count` con `head: true`
  * serian seis viajes para responder una pregunta que cabe en uno.
@@ -112,7 +106,7 @@ const TECHO_FILAS = 5000;
 export async function indicadores({ desde, hasta }) {
   let consulta = supabaseAdmin
     .from(VISTA)
-    .select("etapa, tiene_diferencia, unidades_diferencia, auditoria_finalizado_at");
+    .select("etapa, tiene_diferencia, unidades_diferencia, finalizado_at");
 
   if (desde) consulta = consulta.gte("iniciado_at", `${desde}T00:00:00Z`);
   if (hasta) consulta = consulta.lte("iniciado_at", `${hasta}T23:59:59Z`);
@@ -130,7 +124,7 @@ export async function indicadores({ desde, hasta }) {
 
     // Solo cuentan las auditorias CERRADAS: mientras corre, todo lo que el
     // auditor aun no escaneo se veria como diferencia.
-    if (f.auditoria_finalizado_at) {
+    if (f.finalizado_at) {
       auditadas++;
       if (f.tiene_diferencia) {
         conDiferencia++;
@@ -145,9 +139,9 @@ export async function indicadores({ desde, hasta }) {
     auditadas,
     con_diferencia: conDiferencia,
     unidades_diferencia: unidadesDiferencia,
-    // LA METRICA QUE JUSTIFICA EL MODULO: de todo lo auditado, cuanto no
-    // coincidio con lo alistado. Si sostenidamente da cero, la auditoria es un
-    // costo sin retorno; si no, ahi esta el caso de negocio.
+    // LA METRICA QUE JUSTIFICA EL MODULO: de las auditorias cerradas, cuantas
+    // quedaron con faltante frente a lo facturado. Si sostenidamente da cero,
+    // la auditoria es un costo sin retorno; si no, ahi esta el caso de negocio.
     tasa_discrepancia: auditadas ? (conDiferencia / auditadas) * 100 : null,
   };
 }

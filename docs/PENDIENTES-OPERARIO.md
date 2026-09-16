@@ -14,6 +14,77 @@ Convención: **[A]** alto, **[M]** medio, **[B-]** bajo.
 
 ---
 
+## 0. [A] Auditor-only workflow — contrato que el frontend DEBE adoptar (16 sep 2026)
+
+Cambio de sentido inverso al resto de este archivo: acá el **backend ya cambió**
+y es el frontend del operario el que tiene que seguirlo. Detalle completo en
+`API.md`; plan y decisiones en `PLAN-AUDITOR-ONLY-WORKFLOW.md`. **Se despliega
+junto** con el backend (no "backend primero"): la migración `012` es destructiva
+y deja sin efecto el contrato viejo.
+
+### 0.1 Picking desaparece
+
+- `POST /despachos` **ya no acepta `modo`** (si se envía, se descarta). Solo
+  existe auditoría: el operario abre la factura contra Siesa y valida.
+- Las respuestas de abrir/obtener **no traen `picking` ni `sin_picking`**. Todo
+  lo que el front hacía con esos campos (banners "sin picking previo", modo
+  selector, pestaña de picking) se retira.
+- `modo_habilitado` del operario ya no se envía ni se muestra; la columna queda
+  con un único valor.
+
+### 0.2 Despachador obligatorio al abrir (catálogo, no texto libre)
+
+- Antes de `POST /despachos` el operario elige **quién despachó** de una lista:
+  `GET /api/despachadores` → `{ ok, despachadores: [{ id, nombre, activo }] }`
+  (solo activos por defecto).
+- El body de apertura pasa a `{ numero_factura, despachador_id, tipo_documento }`.
+  `despachador_id` es **obligatorio solo al crear**: si la factura ya tiene un
+  despacho vigente y se reanuda, no se envía ni se exige.
+- Errores: `400` sin `despachador_id` en creación, `404` si el id no existe,
+  `400` si está inactivo. El front debería refrescar la lista al abrir la
+  pantalla, no cachearla entre sesiones (el admin puede desactivar gente).
+- El despacho vuelve con `despachador: { id, nombre, activo }` para mostrarlo
+  en la cabecera de la sesión.
+
+### 0.3 Pasar sin escanear (modo lista y modo cine)
+
+- `POST /despachos/:id/pasar` con `{ item_id, cantidad, motivo? }`.
+  `cantidad` es entera positiva **en unidades base** (la que muestra la línea);
+  `motivo` es opcional, máx. 500 caracteres.
+- Respuestas: `200 { resultado: "pasado_sin_escanear", item, despacho, motivo }`
+  o `200 { resultado: "excede_cantidad" }` (se rechaza entero, nada cambia).
+  `403`/`409` igual que `validar`.
+- Regla que el front no debe relajar: **nunca se despacha más de lo facturado**.
+  Lo razonable es precargar `cantidad` con el restante de la línea.
+- El pase **no cuenta como rechazo ni como error de escaneo** en la analítica; el
+  panel admin lo muestra separado. Por eso en el front conviene un botón
+  distinto al de validar (p. ej. "Pasar sin escanear"), no un atajo escondido.
+
+### 0.4 Modo cine
+
+Es enteramente frontend: los ítems ya vienen ordenados por línea y el pase
+existe. Nada más que pedir al backend.
+
+### 0.5 Panel admin (mismo repo del front)
+
+- Sección para gestionar el catálogo: `POST /api/despachadores { nombre }` y
+  `PATCH /api/despachadores/:id { nombre?, activo? }` (solo admin);
+  `GET /api/despachadores?todos=1` para ver también los inactivos.
+- `GET /facturas/:numero` ya no trae `picking` ni `comparativo`; `resumen`
+  incluye `despachador`; cada escaneo trae `resultado`, `metodo` y `motivo`.
+- Cobertura: se retiran `con_picking*`, `alistada`/`alistando`; llega
+  `cubiertas`/`auditadas`. Analítica: una fila por operario sin `modo`;
+  `serieDiaria` sin llave de modo; `facturasPorDiaSemana` sin
+  `facturas_picking`/`facturas_auditoria`; calidad de escaneo suma
+  `pasados_sin_escanear`.
+- Referencias a picking en `src/pages/DespachoMega` del front (15 archivos):
+  `DMFacturaDetalle`, `DMTabAnalitica`, `DMTabCobertura`, `DMTabFacturas`,
+  `DMTabNovedades`, `DMTabOperarios`, `useDMDespacho`, `DespachoMegaOperario`,
+  `DespachoMegaAdmin.css`, `utils/dmEstados.js`, `dmViz.js`, `dmFrases.js`,
+  CSS compartido.
+
+---
+
 ## 1. [A] Cambio de contraseña en el primer ingreso — punto de enganche del front
 
 Refuerza el `PENDIENTES.md §3`. El nuevo operario NO tiene ninguna vía de

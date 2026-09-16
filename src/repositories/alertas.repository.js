@@ -49,7 +49,7 @@ export async function listar({ estado, despachoId, desde, hasta, limite = 100 })
     .from(TABLA)
     .select(
       `${CAMPOS},
-       despacho:despacho_mega_despachos!despacho_id (numero_factura, modo),
+       despacho:despacho_mega_despachos!despacho_id (numero_factura),
        operario:despacho_mega_operarios!reportada_por (nombre, correo)`,
     )
     .order("created_at", { ascending: false })
@@ -68,7 +68,7 @@ export async function listar({ estado, despachoId, desde, hasta, limite = 100 })
 /**
  * Bandeja del administrador. Lee de `despacho_mega_vw_novedades_inventario`
  * (migracion 007) y no de la tabla, porque necesita tres cosas que la tabla
- * sola no da: cuanto lleva abierta, en que etapa se detecto y el NOMBRE de
+ * sola no da: cuanto lleva abierta, la factura del despacho y el NOMBRE de
  * quien la atendio — `atendida_por` apunta a `auth.users`, no a los operarios
  * del modulo, asi que PostgREST no lo puede resolver con un join automatico.
  *
@@ -76,7 +76,7 @@ export async function listar({ estado, despachoId, desde, hasta, limite = 100 })
  * detalle de una factura y el cierre del despacho, donde la vista seria peso
  * de mas.
  */
-export async function bandeja({ estado, motivo, modo, desde, hasta, limite = 100 }) {
+export async function bandeja({ estado, motivo, desde, hasta, limite = 100 }) {
   let consulta = supabaseAdmin
     .from("despacho_mega_vw_novedades_inventario")
     .select("*")
@@ -85,7 +85,6 @@ export async function bandeja({ estado, motivo, modo, desde, hasta, limite = 100
 
   if (estado) consulta = consulta.eq("estado", estado);
   if (motivo) consulta = consulta.eq("motivo", motivo);
-  if (modo) consulta = consulta.eq("modo", modo);
   if (desde) consulta = consulta.gte("created_at", `${desde}T00:00:00Z`);
   if (hasta) consulta = consulta.lte("created_at", `${hasta}T23:59:59Z`);
 

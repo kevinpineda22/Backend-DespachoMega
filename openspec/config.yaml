@@ -1,0 +1,57 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Node.js >=20 (ESM), Express 4, Supabase (@supabase/supabase-js 2), Zod 3,
+    helmet/cors/express-rate-limit, nodemailer. Deployed on Vercel (api/index.js rewrite).
+  Architecture: Clean layering, one-way controller -> service -> repository. Identity from
+    JWT (validated here, unlike sibling backends), never from request body. SQL migrations
+    in db/migrations/ (001..011) run one-at-a-time in order, idempotent.
+  Testing: Vitest 3 (npm test -> vitest run). 27 tests in 2 colocated files under
+    src/services/*.test.js. Unit layer only. No coverage provider, no CI test pipeline.
+  Style: ESLint 9 installed but BROKEN (no eslint.config.js, npm run lint fails). No type
+    checker, no formatter. Commits: conventional-commit style, messages in Spanish.
+  Domain: Megamayoristas invoice picking/audit vs Siesa. Domain rules live in
+    docs/PENDIENTES.md (Spanish) and CLAUDE.md. All DB objects prefixed despacho_mega_.
+    Technical artifacts default to English; neutral Spanish allowed for business-domain content.
+
+strict_tdd: true
+test_command: "npm test"
+
+testing:
+  runner: vitest
+  command: "npm test"
+  layers:
+    unit: true
+    integration: false
+    e2e: false
+  coverage: false
+  linter: false
+  type_checker: false
+  formatter: false
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    - Respect one-way layering: controller -> service -> repository
+    - Default technical artifacts to English; neutral Spanish allowed for business-domain content
+    - Keep despacho_mega_ prefix on any new DB objects
+    tdd: true
+    test_command: "npm test"
+  verify:
+    test_command: "npm test"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

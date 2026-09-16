@@ -11,6 +11,7 @@ import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 
 import * as despachos from "../controllers/despachos.controller.js";
+import * as despachadores from "../controllers/despachadores.controller.js";
 import * as facturas from "../controllers/facturas.controller.js";
 import * as cobertura from "../controllers/cobertura.controller.js";
 import * as alertas from "../controllers/alertas.controller.js";
@@ -22,16 +23,19 @@ import { z } from "zod";
 import {
   abrirDespachoBody,
   actualizarAlertaBody,
+  actualizarDespachadorBody,
   actualizarOperarioBody,
   ajustarItemBody,
   aprobarBody,
   bandejaNovedadesQuery,
   coberturaQuery,
   crearAlertaBody,
+  crearDespachadorBody,
   excluirFacturaBody,
   finalizarDespachoBody,
   historialQuery,
   listarAlertasQuery,
+  listarDespachadoresQuery,
   listarDespachosQuery,
   listarFacturasQuery,
   numeroFactura,
@@ -39,6 +43,7 @@ import {
   paramsIdItem,
   paramsUserId,
   paramsNumeroFactura,
+  pasarSinEscanearBody,
   rangoFechasQuery,
   resolverCodigoQuery,
   sincronizarCoberturaBody,
@@ -110,6 +115,15 @@ router.post(
   despachos.validar,
 );
 
+// Pasar un item sin escanear: cantidad parcial y motivo opcional. Sin
+// `requireAdmin`: es una accion del auditor sobre su propio despacho, y el
+// servicio aplica el mismo control de acceso que `validar`.
+router.post(
+  "/despachos/:id/pasar",
+  validate({ params: paramsId, body: pasarSinEscanearBody }),
+  despachos.pasar,
+);
+
 // Resolver un codigo (barra o item) a su linea, sin mutar: abre el modal de
 // cantidad al escanear, no solo al teclear el codigo del item.
 router.get(
@@ -151,6 +165,32 @@ router.get(
   "/despachos/:id/eventos",
   validate({ params: paramsId }),
   despachos.eventos,
+);
+
+// --- Despachadores --------------------------------------------------------
+//
+// El GET no pide admin: el operario necesita el catalogo para elegir quien
+// despacha al abrir. `?todos=1` (con inactivos) si es solo admin; esa regla
+// vive en el controlador para no duplicar el guard aca. Sin DELETE: la baja
+// es `PATCH { activo: false }`.
+router.get(
+  "/despachadores",
+  validate({ query: listarDespachadoresQuery }),
+  despachadores.listar,
+);
+
+router.post(
+  "/despachadores",
+  requireAdmin,
+  validate({ body: crearDespachadorBody }),
+  despachadores.crear,
+);
+
+router.patch(
+  "/despachadores/:id",
+  requireAdmin,
+  validate({ params: paramsId, body: actualizarDespachadorBody }),
+  despachadores.actualizar,
 );
 
 // --- Panel de facturas (solo admin) ---------------------------------------

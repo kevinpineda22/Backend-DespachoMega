@@ -35,7 +35,7 @@ export const listarCajas = asyncHandler(async (_req, res) => {
 export const abrir = asyncHandler(async (req, res) => {
   const resultado = await despachoService.abrir({
     numeroFactura: req.body.numero_factura,
-    modo: req.body.modo,
+    despachadorId: req.body.despachador_id,
     tipoDocumento: req.body.tipo_documento,
     usuario: req.usuario,
   });
@@ -59,6 +59,20 @@ export const validar = asyncHandler(async (req, res) => {
   // Un escaneo rechazado NO es un error de la API: la peticion se proceso bien
   // y el rechazo quedo registrado. Devolver 4xx haria que el frontend lo trate
   // como fallo de red y pierda el mensaje que el operario necesita leer.
+  res.json({ ok: true, data });
+});
+
+/**
+ * Pasa un item sin escanear (cantidad parcial, motivo opcional). Igual que en
+ * `validar`, un `excede_cantidad` NO es un error de la API: la peticion se
+ * proceso y el rechazo quedo registrado, asi que responde 200.
+ */
+export const pasar = asyncHandler(async (req, res) => {
+  const data = await despachoService.pasarSinEscanear(
+    req.params.id,
+    req.body,
+    req.usuario,
+  );
   res.json({ ok: true, data });
 });
 

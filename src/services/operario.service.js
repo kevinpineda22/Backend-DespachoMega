@@ -8,13 +8,16 @@
  * con cuenta pero sin ruta, o con ruta pero sin cuenta en el modulo.
  *
  * Quien tiene la ruta asignada queda dado de alta solo la primera vez que
- * entra (ver `middleware/auth.js`), con `modo_habilitado = 'ambos'`.
+ * entra (ver `middleware/auth.js`).
  *
  * Lo que si administra este servicio es lo unico que el sistema de rutas no
  * puede expresar:
  *
- *   modo_habilitado -> si esa persona hace picking, auditoria o ambos
- *   activo          -> sacarla del modulo sin tocarle el resto de la intranet
+ *   activo -> sacarla del modulo sin tocarle el resto de la intranet
+ *   sede   -> donde trabaja
+ *
+ * `modo_habilitado` queda en la tabla con un unico valor ('auditoria') y su
+ * DEFAULT: el servicio no lo escribe ni lo acepta del cliente.
  *
  * El `rol` NO se edita aca: se deriva de la ruta en cada request. Ponerlo a
  * mano duraria hasta el proximo ingreso.
@@ -32,10 +35,10 @@ import { noEncontrado, solicitudInvalida } from "../lib/errores.js";
  * POR QUE NO ALCANZA CON LEER `despacho_mega_operarios`
  * Esa tabla se llena en el primer ingreso. Mientras tanto, alguien con la ruta
  * recien asignada no aparecia en ningun lado, y el admin no podia dejarle
- * configurado "Solo auditoria" antes de que empezara a trabajar: tenia que
- * esperar a que la persona entrara —con los dos procesos habilitados— para
- * recien ahi restringirla. Preparar despues de que la persona ya trabajo es
- * exactamente al reves de como se usa esto.
+ * configurada la sede o desactivarlo antes de que empezara a trabajar: tenia
+ * que esperar a que la persona entrara para recien ahi ajustarlo. Preparar
+ * despues de que la persona ya trabajo es exactamente al reves de como se usa
+ * esto.
  *
  * La solucion NO es que AdminUsuarios escriba en esta tabla: eso serian dos
  * lugares donde se habilita a alguien. Es que el listado se ARME desde las
@@ -66,8 +69,9 @@ export async function listar({ soloActivos } = {}) {
       nombre: perfil.nombre || perfil.correo,
       documento: null,
       rol,
-      // Los mismos valores del alta automatica en `sincronizarOperario`.
-      modo_habilitado: "ambos",
+      // Los mismos valores del alta automatica en `sincronizarOperario`:
+      // `modo_habilitado` es el DEFAULT de la columna.
+      modo_habilitado: "auditoria",
       sede: null,
       activo: true,
       creado_por: null,
@@ -87,10 +91,10 @@ export async function listar({ soloActivos } = {}) {
   //
   //   * La LISTA la esconde. Esta pantalla responde "quien puede trabajar en
   //     el modulo", y alguien sin la ruta no es parte de esa respuesta:
-  //     mostrarlo invita a configurarle un proceso que nunca va a ejecutar.
+  //     mostrarlo invita a configurar a alguien que nunca va a trabajar.
   //
   // Efecto util de conservar la fila: si le devuelven la ruta, reaparece con
-  // su `modo_habilitado` y su `activo` como estaban. No hay que reconfigurarlo.
+  // su `sede` y su `activo` como estaban. No hay que reconfigurarlo.
   const conAcceso = registrados
     .filter((o) => rolPorRuta.get(o.user_id) != null)
     .map((o) => ({ ...o, pendiente_ingreso: false }));
@@ -132,7 +136,7 @@ export async function provisionar(userId, cambios, usuario) {
     correo: (perfil.correo || "").toLowerCase(),
     nombre: perfil.nombre || perfil.correo,
     rol,
-    modo_habilitado: cambios.modo_habilitado ?? "ambos",
+    // `modo_habilitado` no se envia: lo pone el DEFAULT ('auditoria').
     activo: cambios.activo ?? true,
     sede: cambios.sede ?? null,
     creado_por: usuario.correo,
@@ -154,7 +158,7 @@ export async function provisionar(userId, cambios, usuario) {
 
 /**
  * @param {string} id
- * @param {{ modo_habilitado?: string, activo?: boolean, sede?: string, documento?: string }} cambios
+ * @param {{ activo?: boolean, sede?: string, documento?: string }} cambios
  */
 export async function actualizar(id, cambios, usuario) {
   const existente = await operariosRepo.porId(id);

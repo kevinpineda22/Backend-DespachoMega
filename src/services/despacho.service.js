@@ -1,8 +1,9 @@
 /**
- * despacho.service.js — Reglas de negocio del picking y la auditoria.
+ * despacho.service.js — Reglas de negocio de la auditoria.
  *
- * Todo lo que decide si un escaneo vale o no vale esta aca. Los controladores
- * solo traducen HTTP; los repositorios solo hablan con Supabase.
+ * Todo lo que decide si un escaneo (o un pase sin escanear) vale o no vale
+ * esta aca. Los controladores solo traducen HTTP; los repositorios solo hablan
+ * con Supabase.
  */
 import * as despachosRepo from "../repositories/despachos.repository.js";
 import * as alertasRepo from "../repositories/alertas.repository.js";
@@ -11,6 +12,7 @@ import { EVENTO } from "../repositories/eventos.repository.js";
 import { resolverCodigo } from "../repositories/catalogo.repository.js";
 import { consultarFactura } from "./facturaSiesa.service.js";
 import { existenciasDeItems } from "./inventarioSiesa.service.js";
+import * as despachadorService from "./despachador.service.js";
 import { conflicto, noEncontrado, prohibido, solicitudInvalida } from "../lib/errores.js";
 
 const ESTADOS_CERRADOS = ["completado", "aprobado", "rechazado"];
@@ -28,18 +30,28 @@ function asegurarAcceso(despacho, usuario) {
 // ---------------------------------------------------------------------------
 
 /**
- * Abre una factura en el modo pedido, o reanuda la que ya estaba en curso.
+ * Abre la auditoria de una factura, o reanuda la que ya estaba en curso.
  *
  * Por que reanudar en vez de crear otra: el operario puede quedarse sin bateria
  * o cerrar el navegador a mitad de camino. Si al volver a teclear la factura se
  * creara un despacho nuevo, el avance se perderia y quedarian dos registros
  * compitiendo por la misma factura.
  *
- * @param {{ numeroFactura: string, modo: 'picking'|'auditoria', usuario: object,
+ * LA REFERENCIA ES LO FACTURADO EN SIESA. No hay un alistamiento previo contra
+ * el que comparar: la auditoria verifica la factura tal como salio del punto de
+ * venta.
+ * Por eso `cantidad_solicitada` de cada linea es lo facturado, y `snapshot_siesa`
+ * guarda la foto de la factura al momento de abrirla.
+ *
+ * EL DESPACHADOR SE EXIGE SOLO AL CREAR. Al reanudar ya esta guardado y no se
+ * vuelve a pedir ni a validar: si lo desactivaron entre medio, la auditoria en
+ * curso sigue siendo suya.
+ *
+ * @param {{ numeroFactura: string, despachadorId?: string, usuario: object,
  *           tipoDocumento?: string }} args
  */
-export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
-  // LA CAJA NO SE EXIGE, NI EN PICKING NI EN AUDITORIA.
+export async function abrir({ numeroFactura, despachadorId, usuario, tipoDocumento }) {
+  // LA CAJA NO SE EXIGE.
   //
   // `tipoDocumento` es un DESEMPATE opcional, no un requisito: la caja
   // (`ID_TIPO_DOCTO`) ya viene en la consulta a Siesa, asi que el consecutivo
@@ -50,12 +62,12 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
   // ninguna: responde 409 con la lista en `datos.cajas` y el operario desempata.
   // Ese es el unico momento en que la caja se pregunta — y es una excepcion
   // medida (0 colisiones en 468 documentos), no el flujo normal.
-  const vigente = await despachosRepo.despachoVigente(numeroFactura, modo);
+  const vigente = await despachosRepo.despachoVigente(numeroFactura);
 
   if (vigente) {
     if (ESTADOS_CERRADOS.includes(vigente.estado)) {
       throw conflicto(
-        `La factura ${numeroFactura} ya fue procesada en modo ${modo} (estado: ${vigente.estado}).`,
+        `La factura ${numeroFactura} ya fue auditada (estado: ${vigente.estado}).`,
       );
     }
 
@@ -82,44 +94,35 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
       actorUserId: usuario.userId,
       actorCorreo: usuario.correo,
       evento: EVENTO.DESPACHO_REANUDADO,
-      payload: { numero_factura: numeroFactura, modo },
+      payload: { numero_factura: numeroFactura },
     });
 
     const items = await despachosRepo.itemsDe(vigente.id);
 
-    // AL REANUDAR TAMBIEN VIAJA EL CONTEXTO DEL PICKING.
-    // Antes no iba, y la ausencia solo hacia que el banner no apareciera. Ahora
-    // el cliente DEDUCE "auditoria sin picking" de que este campo venga vacio,
-    // asi que omitirlo le avisaria al auditor que no hay alistado cuando si lo
-    // hay. Un banner que falta molesta; uno que miente hace tomar la decision
-    // equivocada.
-    const picking = await contextoPicking(vigente);
-
-    return {
-      despacho: vigente,
-      items,
-      reanudado: true,
-      sin_picking: vigente.modo === "auditoria" && !picking,
-      picking,
-    };
+    return { despacho: vigente, items, reanudado: true };
   }
 
-  if (modo === "auditoria") {
-    return abrirAuditoria({ numeroFactura, usuario, tipoDocumento });
+  // Se valida ANTES de ir a Siesa: un 400 por despachador no tiene por que
+  // costar una descarga de la ventana de facturas.
+  if (!despachadorId) {
+    throw solicitudInvalida("Debe indicar el despachador para abrir la auditoria.");
   }
+  const despachador = await despachadorService.exigirActivo(despachadorId);
 
   const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
     tipoDocumento,
   });
 
+  // `modo` no se envia: la columna tiene DEFAULT 'auditoria' y es el unico
+  // valor del enum.
   const despacho = await despachosRepo.crearConItems(
     {
       numero_factura: encabezado.numero_factura,
       tipo_documento: encabezado.tipo_documento,
       fecha_factura: encabezado.fecha_factura,
-      modo,
       estado: "en_proceso",
       operario_id: usuario.operarioId,
+      despachador_id: despachador.id,
       cliente_nit: encabezado.cliente_nit,
       cliente_nombre: encabezado.cliente_nombre,
       sede: encabezado.sede,
@@ -136,114 +139,11 @@ export async function abrir({ numeroFactura, modo, usuario, tipoDocumento }) {
     actorUserId: usuario.userId,
     actorCorreo: usuario.correo,
     evento: EVENTO.DESPACHO_ABIERTO,
-    payload: { numero_factura: numeroFactura, modo, total_items: items.length },
-  });
-
-  return {
-    despacho,
-    items: await despachosRepo.itemsDe(despacho.id),
-    reanudado: false,
-  };
-}
-
-// Estados en los que un picking ya termino y puede auditarse.
-const PICKING_AUDITABLE = ["completado", "con_novedad", "aprobado"];
-
-/**
- * Abre una auditoria sobre un picking YA FINALIZADO.
- *
- * NO CONSULTA SIESA, y eso es deliberado por dos razones:
- *
- *   1. SEMANTICA. El auditor no verifica la factura, verifica **lo que el
- *      picker efectivamente alisto**. Si el picking cerro con faltantes, lo que
- *      salio de la bodega es lo validado, no lo facturado. Auditar contra la
- *      factura marcaria como faltante algo que ya se reporto y gestiono.
- *
- *   2. ALCANCE. La consulta POS de Siesa solo conserva ~4 dias (ver
- *      docs/PENDIENTES.md §1-ter). Atarse a ella dejaria sin auditar cualquier
- *      despacho de la semana pasada. Contra nuestra propia base, la auditoria
- *      funciona mientras exista el picking.
- *
- * Solo entran las lineas con cantidad validada mayor a cero: una linea que
- * nunca se alisto no tiene nada fisico que verificar, y mostrarla como 0/0
- * seria ruido que el auditor tiene que aprender a ignorar.
- */
-async function abrirAuditoria({ numeroFactura, usuario, tipoDocumento }) {
-  const picking = await despachosRepo.despachoVigente(numeroFactura, "picking");
-
-  // NO SE BLOQUEA POR UN PICKING EN PROCESO. SE AVISA.
-  //
-  // Aca habia un 409: "se puede auditar cuando el operario lo finalice". La
-  // idea era proteger a la auditoria de un conteo que se mueve debajo. En la
-  // practica atrapaba al auditor, porque un picking abierto y nunca trabajado
-  // se queda en `en_proceso` para siempre y nadie lo va a finalizar: al
-  // 12/8/2026 habia 10 asi, la mayoria en 0 lineas validadas de 6, 26 y 70.
-  //
-  // Quien decide es la persona que esta parada en la bodega y ve si alguien
-  // esta alistando esa factura. Lo que el sistema debe hacer es contarle el
-  // estado con numeros, no adivinar por el. El aviso incluye el avance exacto.
-  const itemsPicking = picking ? await despachosRepo.itemsDe(picking.id) : [];
-  const alistados = itemsPicking.filter((i) => Number(i.cantidad_validada) > 0);
-
-  // SIN PICKING UTIL, SE AUDITA CONTRA LA FACTURA.
-  // Hay dias en que solo se audita y el alistado no pasa por el modulo.
-  // Antes eso era un 409 y el auditor no podia trabajar. Ahora entra igual,
-  // avisado: sin picking no hay con que comparar, asi que la referencia pasa a
-  // ser lo FACTURADO en Siesa, no lo que alguien alisto.
-  const auditableDesdePicking =
-    picking && PICKING_AUDITABLE.includes(picking.estado) && alistados.length > 0;
-
-  if (!auditableDesdePicking) {
-    return abrirAuditoriaSinPicking({
-      numeroFactura,
-      usuario,
-      tipoDocumento,
-      picking,
-      itemsPicking,
-    });
-  }
-
-  const despacho = await despachosRepo.crearConItems(
-    {
-      numero_factura: picking.numero_factura,
-      tipo_documento: picking.tipo_documento,
-      fecha_factura: picking.fecha_factura,
-      modo: "auditoria",
-      estado: "en_proceso",
-      operario_id: usuario.operarioId,
-      cliente_nit: picking.cliente_nit,
-      cliente_nombre: picking.cliente_nombre,
-      sede: picking.sede,
-      bodega: picking.bodega,
-      total_items: alistados.length,
-      items_validados: 0,
-      // El snapshot de Siesa ya lo guarda el picking; `despacho_origen_id`
-      // lleva hasta el. Duplicarlo solo ocuparia espacio.
-      snapshot_siesa: null,
-      despacho_origen_id: picking.id,
-    },
-    alistados.map((i, indice) => ({
-      linea: indice + 1,
-      codigo_item: i.codigo_item,
-      descripcion: i.descripcion,
-      unidad: i.unidad,
-      // Lo alistado pasa a ser lo exigido: es contra eso que se verifica.
-      cantidad_solicitada: i.cantidad_validada,
-      precio_unitario: i.precio_unitario,
-    })),
-  );
-
-  await eventosRepo.registrar({
-    despachoId: despacho.id,
-    actorUserId: usuario.userId,
-    actorCorreo: usuario.correo,
-    evento: EVENTO.DESPACHO_ABIERTO,
     payload: {
       numero_factura: numeroFactura,
-      modo: "auditoria",
-      total_items: alistados.length,
-      picking_id: picking.id,
-      picking_estado: picking.estado,
+      total_items: items.length,
+      despachador_id: despachador.id,
+      despachador: despachador.nombre,
     },
   });
 
@@ -251,105 +151,6 @@ async function abrirAuditoria({ numeroFactura, usuario, tipoDocumento }) {
     despacho,
     items: await despachosRepo.itemsDe(despacho.id),
     reanudado: false,
-    sin_picking: false,
-    picking: {
-      id: picking.id,
-      estado: picking.estado,
-      operario_id: picking.operario_id,
-      finalizado_at: picking.finalizado_at,
-      lineas_factura: itemsPicking.length,
-      lineas_alistadas: alistados.length,
-    },
-  };
-}
-
-/**
- * Auditoria de una factura que nunca paso por picking en el modulo.
- *
- * La referencia es lo FACTURADO, no lo alistado, porque no hay alistado con que
- * comparar. En la practica el auditor termina haciendo el conteo completo, y
- * por eso el aviso importa: la pantalla se ve igual que una auditoria normal,
- * pero lo que esta verificando es otra cosa.
- *
- * Queda registrado en la bitacora con `sin_picking: true`. Si manana alguien
- * pregunta por que una factura no tiene picking, la respuesta esta en el evento
- * y no en la memoria de quien estuvo ese dia.
- */
-async function abrirAuditoriaSinPicking({
-  numeroFactura,
-  usuario,
-  tipoDocumento,
-  picking,
-  itemsPicking = [],
-}) {
-  const { encabezado, items, filasCrudas } = await consultarFactura(numeroFactura, {
-    tipoDocumento,
-  });
-
-  const despacho = await despachosRepo.crearConItems(
-    {
-      numero_factura: encabezado.numero_factura,
-      tipo_documento: encabezado.tipo_documento,
-      fecha_factura: encabezado.fecha_factura,
-      modo: "auditoria",
-      estado: "en_proceso",
-      operario_id: usuario.operarioId,
-      cliente_nit: encabezado.cliente_nit,
-      cliente_nombre: encabezado.cliente_nombre,
-      sede: encabezado.sede,
-      bodega: encabezado.bodega,
-      total_items: items.length,
-      items_validados: 0,
-      // Se guarda el snapshot: sin picking de origen, este es el unico registro
-      // de como venia la factura en Siesa al momento de auditarla.
-      snapshot_siesa: filasCrudas,
-      despacho_origen_id: null,
-    },
-    items,
-  );
-
-  // El motivo cambia segun lo que se encontro. El caso `en_proceso` lleva
-  // NUMEROS y no solo el estado: "hay un picking abierto" no le sirve al
-  // auditor para decidir, y "0 de 26 lineas" le dice de una que nadie lo
-  // trabajo. Con eso ya sabe si esta pisando el trabajo de un companero o
-  // levantando algo que quedo abandonado.
-  const avance = picking
-    ? `${itemsPicking.filter((i) => Number(i.cantidad_validada) > 0).length} de ` +
-      `${itemsPicking.length} lineas alistadas`
-    : null;
-
-  const motivo = !picking
-    ? "no tiene picking registrado en el modulo"
-    : picking.estado === "en_proceso"
-      ? `tiene un picking ABIERTO y sin finalizar (${avance})`
-      : PICKING_AUDITABLE.includes(picking.estado)
-        ? "tiene un picking que cerro sin alistar ningun producto"
-        : `tiene un picking en estado ${picking.estado}, que no es auditable`;
-
-  await eventosRepo.registrar({
-    despachoId: despacho.id,
-    actorUserId: usuario.userId,
-    actorCorreo: usuario.correo,
-    evento: EVENTO.DESPACHO_ABIERTO,
-    payload: {
-      numero_factura: numeroFactura,
-      modo: "auditoria",
-      total_items: items.length,
-      sin_picking: true,
-      motivo,
-      picking_id: picking?.id ?? null,
-    },
-  });
-
-  return {
-    despacho,
-    items: await despachosRepo.itemsDe(despacho.id),
-    reanudado: false,
-    sin_picking: true,
-    aviso:
-      `La factura ${numeroFactura} ${motivo}. ` +
-      "Se esta auditando contra lo FACTURADO en Siesa, no contra un alistado.",
-    picking: null,
   };
 }
 
@@ -366,8 +167,8 @@ async function abrirAuditoriaSinPicking({
  * es lo que hace falta: hace falta saber si lo de ESTA factura esta en bodega.
  *
  * Falla suave a proposito. Si Siesa no responde, devuelve `{}` y el panel
- * muestra las tarjetas sin existencias en vez de romperse: el picking se puede
- * hacer sin este dato, que es una ayuda y no un requisito.
+ * muestra las tarjetas sin existencias en vez de romperse: la auditoria se
+ * puede hacer sin este dato, que es una ayuda y no un requisito.
  */
 export async function inventarioDe(id, usuario) {
   const despacho = await despachosRepo.porId(id);
@@ -395,39 +196,9 @@ export async function obtener(id, usuario) {
     despachosRepo.aprobacionesDe(id),
   ]);
 
-  // Si es una auditoria, se adjunta el contexto del picking de origen (el banner
-  // "Verificando el alistado"). Se resuelve ACA y no en el cliente porque el
-  // picking puede ser de OTRO operario, y el cliente solo puede leer lo suyo.
-  // Con esto, al recargar una auditoria en curso el banner vuelve a aparecer.
-  const picking = await contextoPicking(despacho);
-
-  return { despacho, items, escaneos, alertas, aprobaciones, picking };
-}
-
-/**
- * Arma el resumen del picking de origen de una auditoria, con la misma forma que
- * devuelve `abrir`. Devuelve `null` si el despacho no es una auditoria o si el
- * origen ya no existe. Usa el repo con `service_role`: no aplica ownership, lo
- * cual es correcto — el auditor tiene que ver contra que esta verificando aunque
- * el picking sea de otra persona.
- */
-async function contextoPicking(despacho) {
-  if (!despacho.despacho_origen_id) return null;
-
-  const origen = await despachosRepo.porId(despacho.despacho_origen_id);
-  if (!origen) return null;
-
-  const itemsOrigen = await despachosRepo.itemsDe(origen.id);
-  return {
-    id: origen.id,
-    estado: origen.estado,
-    operario_id: origen.operario_id,
-    finalizado_at: origen.finalizado_at,
-    lineas_factura: itemsOrigen.length,
-    lineas_alistadas: itemsOrigen.filter(
-      (i) => Number(i.cantidad_validada) > 0,
-    ).length,
-  };
+  // `escaneos` trae `resultado` y `motivo`: el detalle distingue lo escaneado
+  // de lo pasado sin escanear sin una consulta aparte.
+  return { despacho, items, escaneos, alertas, aprobaciones };
 }
 
 export async function listar(filtros) {
@@ -627,6 +398,143 @@ export async function validar(id, { codigo, metodo, cantidad }, usuario) {
         : `Van ${nuevaCantidad} de ${solicitada} de ${codigoItem}${aporte}.`,
     item: actualizado,
     despacho: despachoActualizado,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pasar un item sin escanear
+// ---------------------------------------------------------------------------
+
+/**
+ * Registra que un item se despacho SIN leer su codigo de barras: etiqueta
+ * danada, producto sin codigo, lector que no responde. Es una accion guiada por
+ * `item_id` (el operario ya esta parado sobre la linea), no por codigo.
+ *
+ * MISMAS REGLAS QUE `validar()`, por diseño: guard `en_proceso`, acceso,
+ * tope contra lo facturado con rechazo entero del exceso, `actualizarItem` y
+ * recalculo de `items_validados`. `validar()` no se toca.
+ *
+ * LO QUE CAMBIA ES LA EVIDENCIA. El registro en `despacho_mega_escaneos` lleva
+ * `resultado = 'pasado_sin_escanear'` y `metodo = 'pase'`, asi las vistas lo
+ * distinguen de un escaneo real y NO lo cuentan como rechazo ni como intento.
+ * `codigo_ingresado` es NOT NULL y no hubo codigo: se guarda el `codigo_item`
+ * de la linea, que es lo que el operario tenia en pantalla.
+ *
+ * @param {string} id Despacho.
+ * @param {{ item_id: string, cantidad: number, motivo?: string }} datos
+ *   `cantidad` en unidades base, entera y positiva (lo garantiza el esquema).
+ * @returns {{ resultado: string, mensaje: string, item: object, despacho?: object, motivo?: string|null }}
+ */
+export async function pasarSinEscanear(id, { item_id: itemId, cantidad, motivo }, usuario) {
+  const despacho = await despachosRepo.porId(id);
+  if (!despacho) throw noEncontrado("Despacho no encontrado.");
+  asegurarAcceso(despacho, usuario);
+
+  if (despacho.estado !== "en_proceso") {
+    throw conflicto(
+      `El despacho esta en estado ${despacho.estado} y ya no admite pases.`,
+    );
+  }
+
+  const items = await despachosRepo.itemsDe(id);
+  const objetivo = items.find((i) => i.id === itemId);
+  if (!objetivo) throw noEncontrado("La linea no pertenece a este despacho.");
+
+  const codigoItem = objetivo.codigo_item;
+  const validadaActual = Number(objetivo.cantidad_validada);
+  const solicitada = Number(objetivo.cantidad_solicitada);
+  const restante = solicitada - validadaActual;
+
+  // REGLA DE NEGOCIO CONFIRMADA: no se despacha mas de lo facturado. El exceso
+  // se rechaza entero, igual que en `validar()`. Una linea ya completa cae aca
+  // (restante = 0) con cualquier cantidad.
+  if (cantidad > restante) {
+    await despachosRepo.registrarEscaneo({
+      despacho_id: id,
+      item_id: objetivo.id,
+      operario_id: usuario.operarioId,
+      codigo_ingresado: codigoItem,
+      codigo_item_resuelto: codigoItem,
+      metodo: "pase",
+      resultado: "excede_cantidad",
+      cantidad,
+      // El motivo solo se guarda cuando el pase entra: un rechazo no es un pase.
+      motivo: null,
+    });
+
+    await eventosRepo.registrar({
+      despachoId: id,
+      actorUserId: usuario.userId,
+      actorCorreo: usuario.correo,
+      evento: EVENTO.ESCANEO_RECHAZADO,
+      payload: { codigoItem, resultado: "excede_cantidad", metodo: "pase", cantidad },
+    });
+
+    return {
+      resultado: "excede_cantidad",
+      mensaje:
+        restante > 0
+          ? `Solo faltan ${restante} unidades de ${codigoItem}; se intento pasar ${cantidad}.`
+          : `El producto ${codigoItem} ya esta completo en esta factura.`,
+      item: objetivo,
+    };
+  }
+
+  const nuevaCantidad = validadaActual + cantidad;
+  const estadoItem = nuevaCantidad >= solicitada ? "completo" : "parcial";
+
+  const actualizado = await despachosRepo.actualizarItem(objetivo.id, {
+    cantidad_validada: nuevaCantidad,
+    estado_item: estadoItem,
+    validado_por: usuario.operarioId,
+    validado_at: new Date().toISOString(),
+  });
+
+  const completos = items.filter(
+    (i) => (i.id === objetivo.id ? estadoItem : i.estado_item) === "completo",
+  ).length;
+
+  const despachoActualizado = await despachosRepo.actualizar(id, {
+    items_validados: completos,
+  });
+
+  const motivoLimpio = motivo ?? null;
+
+  await despachosRepo.registrarEscaneo({
+    despacho_id: id,
+    item_id: objetivo.id,
+    operario_id: usuario.operarioId,
+    codigo_ingresado: codigoItem,
+    codigo_item_resuelto: codigoItem,
+    metodo: "pase",
+    resultado: "pasado_sin_escanear",
+    cantidad,
+    motivo: motivoLimpio,
+  });
+
+  await eventosRepo.registrar({
+    despachoId: id,
+    actorUserId: usuario.userId,
+    actorCorreo: usuario.correo,
+    evento: EVENTO.ITEM_PASE_REGISTRADO,
+    payload: {
+      codigoItem,
+      cantidad,
+      motivo: motivoLimpio,
+      estadoItem,
+      linea: objetivo.linea,
+    },
+  });
+
+  return {
+    resultado: "pasado_sin_escanear",
+    mensaje:
+      estadoItem === "completo"
+        ? `Producto ${codigoItem} completo (pasado sin escanear).`
+        : `Van ${nuevaCantidad} de ${solicitada} de ${codigoItem} (pasado sin escanear).`,
+    item: actualizado,
+    despacho: despachoActualizado,
+    motivo: motivoLimpio,
   };
 }
 
