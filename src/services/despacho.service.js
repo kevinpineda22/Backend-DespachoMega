@@ -235,9 +235,17 @@ export async function historial(id, usuario) {
  * `despacho_mega_escaneos`. Un operario que escanea diez veces algo que no va
  * es informacion — de capacitacion, de rotulado, o de que la factura esta mal.
  *
+ * LINEA FIJADA (`item_id`, opcional). El modo cine muestra UNA linea y solo
+ * acepta escaneos para ella. Si la misma referencia esta en dos lineas de la
+ * factura, la regla "primera con cupo" podia sumar a la que NO estaba en
+ * pantalla. Con `item_id` la linea destino es esa y ninguna otra; el codigo
+ * escaneado tiene que resolver a su `codigo_item`, y si no lo hace se rechaza
+ * como `no_pertenece` (producto conocido, pero no es el de la linea). Sin
+ * `item_id` nada cambia.
+ *
  * @returns {{ resultado: string, mensaje: string, item?: object, despacho?: object }}
  */
-export async function validar(id, { codigo, metodo, cantidad }, usuario) {
+export async function validar(id, { codigo, metodo, cantidad, item_id: itemId }, usuario) {
   const despacho = await despachosRepo.porId(id);
   if (!despacho) throw noEncontrado("Despacho no encontrado.");
   asegurarAcceso(despacho, usuario);
@@ -248,6 +256,14 @@ export async function validar(id, { codigo, metodo, cantidad }, usuario) {
     );
   }
 
+  // Se verifica ANTES de resolver el codigo: un `item_id` ajeno es un error
+  // del cliente (404), no un escaneo que haya que registrar.
+  const items = await despachosRepo.itemsDe(id);
+  const lineaFijada = itemId ? items.find((i) => i.id === itemId) : null;
+  if (itemId && !lineaFijada) {
+    throw noEncontrado("La linea no pertenece a este despacho.");
+  }
+
   // CONTEO MIXTO. `factor` dice cuantas unidades base vale UN escaneo de este
   // codigo: escanear el paquete P12 suma 12, escanear la botella suma 1. La
   // factura pide unidades base (verificado contra Siesa: `CANTIDAD` viene en
@@ -256,8 +272,11 @@ export async function validar(id, { codigo, metodo, cantidad }, usuario) {
   const { codigoItem, factor, unidad, origen } = await resolverCodigo(codigo);
   const unidadesBase = cantidad * factor;
 
-  const items = await despachosRepo.itemsDe(id);
-  const coincidencias = items.filter((i) => i.codigo_item === codigoItem);
+  // Con linea fijada, las "coincidencias" son esa linea o ninguna: asi el resto
+  // del flujo (completa, excede, aceptado) queda identico y sin ramas nuevas.
+  const coincidencias = lineaFijada
+    ? [lineaFijada].filter((i) => i.codigo_item === codigoItem)
+    : items.filter((i) => i.codigo_item === codigoItem);
 
   const rechazar = async (resultado, mensaje, item = null) => {
     await despachosRepo.registrarEscaneo({
@@ -286,6 +305,18 @@ export async function validar(id, { codigo, metodo, cantidad }, usuario) {
   };
 
   if (coincidencias.length === 0) {
+    // Linea fijada y el codigo resolvio a OTRA referencia: el producto puede
+    // estar en la factura, pero no es el que esta en pantalla. Se registra
+    // contra la linea fijada para que la bitacora diga sobre que se escaneo.
+    if (lineaFijada && origen !== "directo") {
+      return rechazar(
+        "no_pertenece",
+        `El codigo corresponde a ${codigoItem}, no a la linea en pantalla ` +
+          `(${lineaFijada.codigo_item}).`,
+        lineaFijada,
+      );
+    }
+
     // `directo` = el codigo no se reconocio en ningun lado. Cualquier otro
     // origen significa que SI sabemos que producto es, y entonces el problema
     // es que no pertenece a esta factura. La diferencia le importa al operario:

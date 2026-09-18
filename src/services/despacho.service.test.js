@@ -63,6 +63,7 @@ vi.mock("./despachador.service.js", () => ({
 import * as despachosRepo from "../repositories/despachos.repository.js";
 import * as eventosRepo from "../repositories/eventos.repository.js";
 import { consultarFactura } from "./facturaSiesa.service.js";
+import { resolverCodigo } from "../repositories/catalogo.repository.js";
 import * as despachadorService from "./despachador.service.js";
 import * as servicio from "./despacho.service.js";
 
@@ -433,5 +434,116 @@ describe("pasarSinEscanear", () => {
       ),
     ).rejects.toMatchObject({ status: 404 });
     expect(despachosRepo.registrarEscaneo).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validar con item_id (modo cine)
+// ---------------------------------------------------------------------------
+
+describe("validar con item_id", () => {
+  // Dos lineas con el MISMO codigo_item: la 1 ya completa, la 2 con cupo.
+  // Sin `item_id`, la regla "primera con cupo" elegiria la 2.
+  const LINEA_1 = ITEM_ID;
+  const LINEA_2 = "77777777-7777-4777-8777-777777777777";
+
+  const duplicadas = () => [
+    item({ id: LINEA_1, linea: 1, cantidad_solicitada: 10, cantidad_validada: 4, estado_item: "parcial" }),
+    item({ id: LINEA_2, linea: 2, cantidad_solicitada: 5, cantidad_validada: 0, estado_item: "pendiente" }),
+    otroItem(),
+  ];
+
+  beforeEach(() => {
+    despachosRepo.porId.mockResolvedValue(despacho());
+    despachosRepo.itemsDe.mockResolvedValue(duplicadas());
+    resolverCodigo.mockImplementation(async (codigo) => ({
+      codigoItem: codigo,
+      factor: 1,
+      unidad: "UND",
+      origen: "item",
+    }));
+  });
+
+  it("con item_id suma a esa linea aunque haya otra con el mismo codigo y cupo", async () => {
+    const r = await servicio.validar(
+      DESPACHO_ID,
+      { codigo: "A100", metodo: "manual", cantidad: 2, item_id: LINEA_2 },
+      usuario,
+    );
+
+    expect(r.resultado).toBe("aceptado");
+    expect(despachosRepo.actualizarItem).toHaveBeenCalledTimes(1);
+    expect(despachosRepo.actualizarItem).toHaveBeenCalledWith(
+      LINEA_2,
+      expect.objectContaining({ cantidad_validada: 2, estado_item: "parcial" }),
+    );
+    expect(despachosRepo.registrarEscaneo).toHaveBeenCalledWith(
+      expect.objectContaining({ item_id: LINEA_2, resultado: "aceptado", cantidad: 2 }),
+    );
+  });
+
+  it("con item_id de otro producto rechaza no_pertenece sin alterar cantidades", async () => {
+    // La linea en pantalla es B200; el codigo escaneado resuelve a A100.
+    const r = await servicio.validar(
+      DESPACHO_ID,
+      { codigo: "A100", metodo: "escaner", cantidad: 1, item_id: otroItem().id },
+      usuario,
+    );
+
+    expect(r.resultado).toBe("no_pertenece");
+    expect(r.mensaje).toMatch(/B200/);
+    expect(despachosRepo.actualizarItem).not.toHaveBeenCalled();
+    expect(despachosRepo.actualizar).not.toHaveBeenCalled();
+    expect(despachosRepo.registrarEscaneo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        item_id: otroItem().id,
+        codigo_item_resuelto: "A100",
+        resultado: "no_pertenece",
+      }),
+    );
+    expect(eventosRepo.registrar).toHaveBeenCalledWith(
+      expect.objectContaining({ evento: "escaneo_rechazado" }),
+    );
+  });
+
+  it("con item_id que no pertenece al despacho lanza noEncontrado", async () => {
+    await expect(
+      servicio.validar(
+        DESPACHO_ID,
+        { codigo: "A100", metodo: "escaner", cantidad: 1, item_id: "88888888-8888-4888-8888-888888888888" },
+        usuario,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(despachosRepo.registrarEscaneo).not.toHaveBeenCalled();
+  });
+
+  it("con item_id sobre linea completa rechaza item_completo", async () => {
+    despachosRepo.itemsDe.mockResolvedValue([
+      item({ id: LINEA_1, cantidad_validada: 10, estado_item: "completo" }),
+      item({ id: LINEA_2, linea: 2, cantidad_solicitada: 5, cantidad_validada: 0 }),
+    ]);
+
+    const r = await servicio.validar(
+      DESPACHO_ID,
+      { codigo: "A100", metodo: "escaner", cantidad: 1, item_id: LINEA_1 },
+      usuario,
+    );
+
+    expect(r.resultado).toBe("item_completo");
+    expect(despachosRepo.actualizarItem).not.toHaveBeenCalled();
+  });
+
+  it("sin item_id conserva el comportamiento actual: primera linea con cupo", async () => {
+    const r = await servicio.validar(
+      DESPACHO_ID,
+      { codigo: "A100", metodo: "manual", cantidad: 2 },
+      usuario,
+    );
+
+    expect(r.resultado).toBe("aceptado");
+    expect(despachosRepo.actualizarItem).toHaveBeenCalledWith(
+      LINEA_1,
+      expect.objectContaining({ cantidad_validada: 6, estado_item: "parcial" }),
+    );
   });
 });

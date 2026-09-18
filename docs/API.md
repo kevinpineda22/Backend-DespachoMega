@@ -149,8 +149,22 @@ Un operario solo puede ver los suyos; el admin ve todos.
 Procesa un escaneo o un ingreso manual.
 
 ```json
-{ "codigo": "7702011234567", "metodo": "escaner", "cantidad": 1 }
+{ "codigo": "7702011234567", "metodo": "escaner", "cantidad": 1, "item_id": "uuid (opcional)" }
 ```
+
+`item_id` **fija la línea destino**. Lo manda el modo cine, que muestra una sola
+línea y solo acepta escaneos para ella: si la misma referencia aparece en dos
+líneas de la factura, sin `item_id` el escaneo iría a la primera con cupo,
+aunque no sea la que está en pantalla.
+
+- Con `item_id`: el código debe resolver al `codigo_item` de **esa** línea. Si
+  resuelve a otra referencia, responde `no_pertenece` con un mensaje que nombra
+  las dos (`"El codigo corresponde a X, no a la linea en pantalla (Y)."`) y no
+  altera cantidades; el intento queda registrado sobre la línea fijada. Las
+  reglas de `item_completo` y `excede_cantidad` aplican igual sobre esa línea.
+- `404` si `item_id` no pertenece a este despacho (no se registra intento).
+- Sin `item_id`: comportamiento de siempre (primera línea con cupo, en orden de
+  factura).
 
 **Responde 200 incluso cuando rechaza el escaneo.** La petición se procesó bien y
 el rechazo quedó registrado; el resultado va en el cuerpo:
@@ -580,7 +594,7 @@ Query: `todos=1` (o `true`) incluye los inactivos. **Solo admin**: otro rol
 recibe `403`.
 
 ```json
-{ "ok": true, "despachadores": [ { "id": "uuid", "nombre": "Carlos Pérez", "activo": true, "created_at": "…", "updated_at": "…" } ] }
+{ "ok": true, "data": { "despachadores": [ { "id": "uuid", "nombre": "Carlos Pérez", "activo": true, "created_at": "…", "updated_at": "…" } ] } }
 ```
 
 ### `POST /api/despachadores` · solo admin
@@ -589,7 +603,7 @@ recibe `403`.
 { "nombre": "Carlos Pérez" }
 ```
 
-- `201 { despachador }`.
+- `201 { "ok": true, "data": { "despachador": { "…" } } }`.
 - `400` si el nombre está vacío (se recorta antes de validar; 2–80 caracteres).
 - `409` si ya existe otro con el mismo nombre, sin distinguir mayúsculas ni
   espacios al borde (índice único sobre `lower(trim(nombre))`).
@@ -600,7 +614,8 @@ recibe `403`.
 { "nombre": "Carlos A. Pérez", "activo": false }
 ```
 
-Al menos un campo. `200 { despachador }`; `404` si no existe; `409` si el nombre
+Al menos un campo. `200 { "ok": true, "data": { "despachador": { "…" } } }`;
+`404` si no existe; `409` si el nombre
 nuevo choca con otro.
 
 **No hay `DELETE`.** La baja es `activo = false`: el despachador deja de

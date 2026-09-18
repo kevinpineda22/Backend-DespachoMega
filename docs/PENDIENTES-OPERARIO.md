@@ -35,7 +35,7 @@ y deja sin efecto el contrato viejo.
 ### 0.2 Despachador obligatorio al abrir (catálogo, no texto libre)
 
 - Antes de `POST /despachos` el operario elige **quién despachó** de una lista:
-  `GET /api/despachadores` → `{ ok, despachadores: [{ id, nombre, activo }] }`
+  `GET /api/despachadores` → `{ ok, data: { despachadores: [{ id, nombre, activo }] } }`
   (solo activos por defecto).
 - El body de apertura pasa a `{ numero_factura, despachador_id, tipo_documento }`.
   `despachador_id` es **obligatorio solo al crear**: si la factura ya tiene un

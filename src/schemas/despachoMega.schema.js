@@ -62,6 +62,11 @@ export const validarItemBody = z.object({
   // El operario puede validar de a varias unidades (caja de 12) en vez de
   // escanear doce veces.
   cantidad: z.coerce.number().positive("La cantidad debe ser mayor a cero.").default(1),
+  // OPCIONAL: fija la linea destino. Lo manda el modo cine, que muestra UNA
+  // linea y solo acepta escaneos para ella; sin esto, un codigo repetido en dos
+  // lineas podia sumar a la que no estaba en pantalla. Sin `item_id` se aplica
+  // la regla de siempre (primera linea con cupo).
+  item_id: uuid.optional(),
 });
 
 // Pasar un item sin escanear: accion guiada por `item_id`, sin codigo ni

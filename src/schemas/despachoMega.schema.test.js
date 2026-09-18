@@ -169,3 +169,16 @@ describe("querys de lectura sin modo", () => {
     expect(schema.actualizarOperarioBody.safeParse({ activo: false }).success).toBe(true);
   });
 });
+
+describe("validarItemBody", () => {
+  it("item_id es opcional", () => {
+    const r = schema.validarItemBody.safeParse({ codigo: "A100" });
+    expect(r.success).toBe(true);
+    expect(r.data.item_id).toBeUndefined();
+  });
+
+  it("item_id debe ser uuid", () => {
+    expect(schema.validarItemBody.safeParse({ codigo: "A100", item_id: UUID }).success).toBe(true);
+    expect(schema.validarItemBody.safeParse({ codigo: "A100", item_id: "x" }).success).toBe(false);
+  });
+});
